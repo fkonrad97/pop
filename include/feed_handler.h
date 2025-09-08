@@ -427,7 +427,7 @@ namespace md {
     *
     * @par Invariants
     * - `bids_desc` strictly desc by `px_ticks`; `asks_asc` strictly asc.
-    * - No duplicate `px_ticks` within a side; all `qty_lots > 0`.
+    * - No duplicate `px_ticks` within a side; all `sz_lots > 0`.
     * - If both sides non-empty: `best_bid_px_ticks < best_ask_px_ticks`
     *   (no crossed book); otherwise handler should resync.
     * - `m.seq` equals the venue’s **snapshot sequence** (or a synthetic `S`)
@@ -800,94 +800,236 @@ namespace md {
      */
     class IFeedHandler {
     public:
+        /** @brief Virtual dtor. */
         virtual ~IFeedHandler() = default;
 
-        /**
-         * Identity & lifecycle
-        */
-        [[nodiscard]] virtual VenueId     venue_id()   const = 0;  ///< Static venue id.
-        [[nodiscard]] virtual std::string venue_name() const = 0;  ///< Human-readable label.
+        /** @brief Static venue id. @return VenueId. */
+        [[nodiscard]] virtual VenueId     venue_id()   const = 0;
+        /** @brief Human-readable venue label. @return name string. */
+        [[nodiscard]] virtual std::string venue_name() const = 0;
 
         /**
          * @brief Initialize from external config (no network I/O).
-         * @return Status::OK if accepted; otherwise error code.
+         * @param cfg Parsed configuration (static + hot sections).
+         * @return Status::OK if accepted; otherwise an error.
          */
         [[nodiscard]] virtual Status init(const FeedHandlerConfig& cfg) = 0;
 
         /**
-         * @brief Start network I/O and perform snapshot→replay handshake.
-         * Non-blocking; results arrive via sinks.
+         * @brief Start network I/O and snapshot→replay handshake (non-blocking).
+         * @return Status::OK if the start request was accepted.
          */
         [[nodiscard]] virtual Status start() = 0;
 
-        /// Request graceful shutdown; non-blocking.
+        /** @brief Request graceful shutdown (non-blocking). */
         virtual void   stop()  = 0;
 
-        /// Block until the handler has fully stopped (optional convenience).
+        /** @brief Block until the handler has fully stopped. */
         virtual void   join()  = 0;
 
+        /** @brief Running flag. @return true if started and not yet stopped. */
         [[nodiscard]] virtual bool  is_running() const = 0;
+        /** @brief Current high-level state. @return @ref State value. */
         [[nodiscard]] virtual State state()      const = 0;
 
-        // Wiring sinks
+        /**
+         * @brief Set the target for normalized book events.
+         * @param sink Non-owning pointer; must remain valid while installed.
+         * pass nullptr to uninstall
+         */
         virtual void set_book_sink(IBookWriterSink* sink) = 0;
+        /**
+         * @brief Set the target for health updates/heartbeats.
+         * @param sink Non-owning pointer; must remain valid while installed.
+         * pass nullptr to uninstall.
+         */
         virtual void set_health_sink(IHealthSink* sink)   = 0;
 
-        // Subscriptions (symbols & channels)
         /**
-         * @brief Replace the entire watch list. Implementation should unsubscribe
-         * removed instruments and subscribe+handshake added ones (rate-limited).
+         * @brief Replace the entire instrument watch list.
+         * @param full_set New set of InstrumentIds.
+         * @return Status::OK if accepted (unsubscribe removed; subscribe new).
          */
         [[nodiscard]] virtual Status set_instruments(const std::vector<InstrumentId>& full_set) = 0;
 
-        /// Incremental add/remove.
-        [[nodiscard]] virtual Status add_instruments(const std::vector<InstrumentId>& add)       = 0;
+        /**
+         * @brief Add instruments to the watch list.
+         * @param add InstrumentIds to add.
+         * @return Status::OK if accepted.
+         */
+        [[nodiscard]] virtual Status add_instruments(const std::vector<InstrumentId>& add) = 0;
+
+        /**
+         * @brief Remove instruments from the watch list.
+         * @param remove InstrumentIds to remove.
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status remove_instruments(const std::vector<InstrumentId>& remove) = 0;
 
-        /// Change subscribed channels (e.g., DEPTH_L2 | TRADES). May resubscribe.
+        /**
+         * @brief Change subscribed channels (e.g., DEPTH_L2 | TRADES).
+         * @param channels Bitmask of @ref ChannelBits.
+         * @return Status::OK if accepted (may trigger resubscribe).
+         */
         [[nodiscard]] virtual Status set_channels(ChannelsMask channels) = 0;
 
-        // Snapshot / resync controls
-        /// Force snapshot→replay for one instrument (bumps snapshot_ver).
+        /**
+         * @brief Force snapshot→replay for one instrument (bumps snapshot_ver).
+         * @param id InstrumentId.
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status request_snapshot(InstrumentId id) = 0;
-        /// Force snapshot→replay for all current instruments (rate-limited).
+
+        /**
+         * @brief Force snapshot→replay for all current instruments.
+         * @return Status::OK if accepted (rate-limited).
+         */
         [[nodiscard]] virtual Status request_snapshot_all() = 0;
-        /// Force resync (enter RESYNCING immediately) with a reason tag.
+
+        /**
+         * @brief Force immediate resync to RESYNCING with a reason.
+         * @param id InstrumentId.
+         * @param reason Short tag (e.g., "GAP", "STALE").
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status force_resync(InstrumentId id, const std::string& reason) = 0;
+
+        /**
+         * @brief Force resync for all instruments with a reason.
+         * @param reason Short tag.
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status force_resync_all(const std::string& reason) = 0;
 
-        // Runtime tuning (hot)
+        /**
+         * @brief Set target Top-K depth per side.
+         * @param k Levels per side.
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status set_depth_k(std::uint16_t k) = 0;
+
+        /**
+         * @brief Enable/disable conflation and its max window.
+         * @param enabled On/off.
+         * @param window Max hold time for last-value merge.
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status set_conflation(bool enabled, std::chrono::milliseconds window) = 0;
+
+        /**
+         * @brief Update liveness/time thresholds.
+         * @param t New timeouts.
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status set_timeouts(const Timeouts& t) = 0;
+
+        /**
+         * @brief Update reconnect retry parameters.
+         * @param b Backoff config.
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status set_reconnect_backoff(const Backoff& b) = 0;
+
+        /**
+         * @brief Update snapshot retry parameters.
+         * @param b Backoff config.
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status set_snapshot_backoff(const Backoff& b)  = 0;
+
+        /**
+         * @brief Set max capacity for out-of-order smoothing buffer.
+         * @param capacity Buffer size (by messages).
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status set_reorder_buffer(std::size_t capacity) = 0;
+
+        /**
+         * @brief Choose snapshot source (REST or WS_SNAPSHOT).
+         * @param src Source.
+         * @return Status::OK if accepted (may trigger resync).
+         */
         [[nodiscard]] virtual Status set_snapshot_source(SnapshotSource src) = 0;
 
-        /// Update filters for one instrument (should bump snapshot_ver + resync).
+        /**
+         * @brief Update normalization filters for one instrument.
+         * @param id InstrumentId.
+         * @param f New Filters (tick/step/minima).
+         * @return Status::OK if accepted (should bump snapshot_ver + resync).
+         */
         [[nodiscard]] virtual Status set_filters(InstrumentId id, const Filters& f) = 0;
 
-        /// Bulk filters update; implementers may apply per-instrument resyncs.
-        [[nodiscard]] virtual Status set_filters_bulk(const std::vector<std::pair<InstrumentId, Filters>>& all) = 0;
+        /**
+         * @brief Bulk filters update (adapter may resync per instrument).
+         * @param all Vector of (InstrumentId, Filters).
+         * @return Status::OK if accepted.
+         */
+        [[nodiscard]] virtual Status set_filters_bulk(
+            const std::vector<std::pair<InstrumentId, Filters>>& all) = 0;
 
-        // Security (usually static; may require reconnect)
+        /**
+         * @brief Enable/disable TLS (usually static; may require reconnect).
+         * @param enabled true to enable.
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status set_tls(bool enabled) = 0;
+
+        /**
+         * @brief Set SPKI certificate pins (usually static; may require reconnect).
+         * @param spki_pins Vector of base64(SPKI) pins.
+         * @return Status::OK if accepted.
+         */
         [[nodiscard]] virtual Status set_cert_pins(const std::vector<std::string>& spki_pins) = 0;
 
-        // Inspection
-        [[nodiscard]] virtual FeedStatus                 current_status() const = 0;
-        [[nodiscard]] virtual HandlerStats               stats()          const = 0;
-        [[nodiscard]] virtual SeqInfo                    seq_info(InstrumentId id) const = 0;
-        [[nodiscard]] virtual std::vector<InstrumentId>  instruments()    const = 0;
-        [[nodiscard]] virtual ChannelsMask               channels()       const = 0;
+        /**
+         * @brief Current feed health snapshot.
+         * @return FeedStatus (venue-level).
+         */
+        [[nodiscard]] virtual FeedStatus current_status() const = 0;
 
-        // Instrument mapping helpers
+        /**
+         * @brief Lightweight counters/latencies for observability.
+         * @return HandlerStats.
+         */
+        [[nodiscard]] virtual HandlerStats stats() const = 0;
+
+        /**
+         * @brief Per-instrument sequencing snapshot.
+         * @param id InstrumentId.
+         * @return SeqInfo.
+         */
+        [[nodiscard]] virtual SeqInfo seq_info(InstrumentId id) const = 0;
+
+        /** @brief Current instrument watch list. @return vector of InstrumentId. */
+        [[nodiscard]] virtual std::vector<InstrumentId> instruments() const = 0;
+
+        /** @brief Current subscribed channels. @return ChannelsMask. */
+        [[nodiscard]] virtual ChannelsMask channels() const = 0;
+
+        /**
+         * @brief Resolve venue symbol → InstrumentId.
+         * @param venue_symbol Raw venue symbol (e.g., "BTCUSDT").
+         * @return InstrumentId (0 if unknown).
+         */
         [[nodiscard]] virtual InstrumentId resolve_symbol(std::string_view venue_symbol) const = 0;
-        [[nodiscard]] virtual std::string  symbol_for(InstrumentId id) const = 0;
 
-        // Maintenance / networking
-        [[nodiscard]] virtual Status reconnect_now() = 0;   ///< Tear down and reconnect (safe-guarded).
-        [[nodiscard]] virtual Status rotate_endpoint() = 0; ///< Switch to next failover WS URL.
+        /**
+         * @brief Resolve InstrumentId → venue symbol (if known).
+         * @param id InstrumentId.
+         * @return Symbol string (empty if unknown).
+         */
+        [[nodiscard]] virtual std::string symbol_for(InstrumentId id) const = 0;
+
+        /**
+         * @brief Tear down and reconnect (guarded by rate limits/backoff).
+         * @return Status::OK if accepted.
+         */
+        [[nodiscard]] virtual Status reconnect_now() = 0;
+
+        /**
+         * @brief Rotate to next failover WS endpoint.
+         * @return Status::OK if accepted.
+         */
+        [[nodiscard]] virtual Status rotate_endpoint() = 0;
     };
 }
