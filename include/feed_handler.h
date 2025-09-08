@@ -1,11 +1,12 @@
 #pragma once            // https://en.wikipedia.org/wiki/Pragma_once
+#include <cstdint>
 #include <string>
 #include <vector>
+#include <string_view>  // for resolve_symbol(...)
+#include <utility>      // for std::pair in vectors
 #include <chrono>
 
-// market data
 namespace md {
-
     /**
      * @typedef VenueId
      * @brief Stable numeric identifier for an exchange/venue (e.g., 1=BINANCE, 2=KRAKEN).
@@ -79,8 +80,12 @@ namespace md {
      *  - Passing 0 (no flags) typically results in unsubscribing from all streams.
      *
      * Example:
-     *   ChannelsMask mask = DEPTH_L2 | TRADES;
-     *   if (mask & DEPTH_L2) { / subscribe depth / }
+    * @code
+    * ChannelsMask mask = DEPTH_L2 | TRADES;
+    * if (mask & DEPTH_L2) {
+    *     /* subscribe depth *\/
+    * }
+    * @endcode
     */
     enum ChannelBits : std::uint32_t {
         DEPTH_L1 = 1u << 0,  ///< Top-of-Book (best bid/ask)
@@ -411,7 +416,7 @@ namespace md {
     * @par Context
     * - Represents the **aggregated price-level** book (L2), normalized to
     *   integer grids: price in @ref PriceLevel::px_ticks, quantity in
-    *   @ref PriceLevel::qty_lots (see @ref Filters).
+    *   @ref PriceLevel::sz_lots (see @ref Filters).
     * - Arrays are **already sorted**:
     *     * `bids_desc`: strictly descending by price (best bid at index 0).
     *     * `asks_asc` : strictly ascending by price (best ask at index 0).
@@ -564,4 +569,325 @@ namespace md {
         std::string  reason;     ///< e.g., "GAP", "STALE", "RECONNECT"; empty for routine heartbeat
     };
 
+    /**
+     * @struct FeedHandlerStaticConfig
+     * @brief **Static** settings for a venue feed handler.
+     *
+     * Fields:
+     *  - venue        : Stable numeric venue id (e.g., 1=BINANCE).
+     *  - venue_name   : Human-readable label (for logs/metrics).
+     *  - ws_urls      : WebSocket endpoints (primary + failovers) for MD.
+     *  - rest_snapshot_url : HTTP endpoint for snapshots (if SnapshotSource::REST).
+     *  - snapshot_source   : Where to fetch snapshots (REST or WS_SNAPSHOT).
+     *  - tls          : Enable TLS on network connections.
+     *  - cert_pins_spki : Optional SPKI pins for certificate pinning.
+     */
+    struct FeedHandlerStaticConfig {
+        VenueId venue{0};
+        std::string venue_name;
+        std::vector<std::string> ws_urls;
+        std::string rest_snapshot_url;
+        SnapshotSource snapshot_source{SnapshotSource::REST};
+        bool tls{true};
+        std::vector<std::string> cert_pins_spki;
+    };
+
+    /**
+     * @struct FeedHandlerHotConfig
+     * @brief **Hot-reloadable** settings (safe to change at runtime).
+     *
+     * Applying a diff of these fields should not require a process restart. Some
+     * changes (e.g., filters/depth) SHOULD trigger a per-instrument resync
+     * (bump `snapshot_ver`, do snapshot→replay).
+     *
+     * Fields:
+     *  - channels   : Bitmask of subscribed streams (DEPTH_L2, TRADES, ...).
+     *  - depth_k    : Target Top-K per side to maintain/emit.
+     *  - instruments: Watch list by InstrumentId (alternative to `symbols`).
+     *  - symbols    : Watch list by venue symbol (adapter maps to ids).
+     *  - filters_by_id / filters_by_symbol :
+     *                Per-instrument normalization filters (px_tick, qty_step, ...).
+     *                **Changing filters requires resync** of affected instruments.
+     *  - timeouts   : Connect/subscribe/heartbeat/read-idle thresholds.
+     *  - reconnect_backoff / snapshot_backoff :
+     *                Retry tunables for WS connect and snapshot fetch.
+     *  - conflate   : Enable last-value conflation toward the Book Writer.
+     *  - conflation_window_ms :
+     *                Max hold time for conflation before flushing.
+     *  - reorder_buffer :
+     *                Capacity for out-of-order smoothing (by seq).
+     */
+    struct FeedHandlerHotConfig {
+        ChannelsMask channels{DEPTH_L2};
+        std::uint16_t depth_k{25};
+
+        std::vector<InstrumentId> instruments;
+        std::vector<std::string>  symbols;
+
+        std::vector<std::pair<InstrumentId, Filters>> filters_by_id;
+        std::vector<std::pair<std::string,   Filters>> filters_by_symbol;
+
+        Timeouts timeouts{};
+        Backoff  reconnect_backoff{};
+        Backoff  snapshot_backoff{};
+
+        bool        conflate{true};
+        int         conflation_window_ms{10};
+        std::size_t reorder_buffer{64};
+    };
+
+    /**
+     * @struct FeedHandlerConfig
+     * @brief Top-level config container (static + hot sections).
+     *
+     * Usage:
+     *  - Load once at startup (init with `s` + `h`).
+     *  - On file change, compute diff on `h` and apply via IFeedHandler setters:
+     *      set_channels/depth_k/timeouts/backoff/conflation/reorder_buffer,
+     *      add/remove_instruments, set_filters(_bulk).
+     *  - Treat changes in `s` as **static**: plan reconnect or restart.
+     *
+     * Fields:
+     *  - schema_version : Config file schema; bump on incompatible changes.
+     *  - s              : Static config (rarely changed).
+     *  - h              : Hot-reloadable config (runtime tweaks).
+     */
+    struct FeedHandlerConfig {
+        int schema_version{1};
+        FeedHandlerStaticConfig s;
+        FeedHandlerHotConfig    h;
+    };
+
+    /**
+    * @struct IBookWriterSink
+    * @brief Target for normalized book events emitted by a FeedHandler.
+    *
+    * Threading & performance:
+    *  - Callbacks are invoked from the FeedHandler’s I/O thread. **Do not block**
+    *  - Implementations should enqueue work to an internal single-writer data
+    *    structure (e.g., lock-free ring/MPSC queue) and return immediately.
+    *  - Callbacks must be **exception-safe**; do not throw across this boundary.
+    *
+    * Delivery semantics (per {venue, inst, snapshot_ver}):
+    *  - Exactly one @ref on_snapshot at the start of a lineage.
+    *  - Followed by many @ref on_delta in strictly increasing m.seq (gap-free).
+    *  - Cross-instrument ordering is not guaranteed.
+    *  - @ref on_trade is optional and independent of depth; trades do not mutate the book.
+    *
+    * Lifetime:
+    *  - The sink pointer is installed via IFeedHandler::set_book_sink(...) and must
+    *    remain valid until either replaced with nullptr or the handler stops.
+    */
+    struct IBookWriterSink {
+        virtual ~IBookWriterSink() = default;
+
+        /**
+         * @brief Baseline L2 book for a new lineage (Top-K per side).
+         * @details Called once per lineage before any deltas for that lineage.
+         *          Snapshot vectors are pre-sorted and contain strictly positive sizes.
+         *          Typical action: replace the instrument’s in-memory book state.
+         */
+        virtual void on_snapshot(const OrderBookSnapshot& s) = 0;
+
+        /**
+         * @brief Incremental price-level change (UPSERT/DELETE) applied on the snapshot.
+         * @details Deltas arrive in-order and gap-free for the current lineage.
+         *          Typical action: mutate the per-instrument book (single-writer).
+         *          If you detect a violation (e.g., crossed book), mark for resync.
+         */
+        virtual void on_delta(const OrderBookDelta& d) = 0;
+
+        /**
+         * @brief Optional trade print (does NOT mutate depth).
+         * @details Default no-op. Use for analytics/cold-path (VWAP, flow, bars).
+         */
+        virtual void on_trade(const TradeTick&) {}
+    };
+
+    /**
+    * @struct IHealthSink
+    * @brief Receives health transitions and heartbeats from a FeedHandler.
+    *
+    * Threading:
+    *  - Invoked on the FeedHandler's I/O thread. **Do not block** or throw.
+    *  - Do minimal work (e.g., atomically store latest status, enqueue a light task).
+    *
+    * Semantics:
+    *  - Emitted on state transitions (see @ref FeedHealth) and optionally as a
+    *    periodic heartbeat (e.g., ~1s) while the state is unchanged.
+    *  - Status is per *handler/venue* (not per instrument). Consumers may derive
+    *    stricter policies (e.g., mark venue "untradeable" unless HEALTHY).
+    *
+    * Payload:
+    *  - st.venue   : venue id of the handler reporting.
+    *  - st.health  : HEALTHY / DEGRADED / STALE / RESYNCING / DOWN.
+    *  - st.reason  : short tag for cause (e.g., "GAP", "STALE", "RECONNECT").
+    *                 May be empty on routine heartbeats.
+    *
+    * Idempotency:
+    *  - Heartbeats may repeat the same health value. Sinks should de-duplicate if desired.
+    *
+    * Example (gating logic):
+    * @code
+    * void on_feed_status(const FeedStatus& st) override {
+    *     last_status_.store(st, std::memory_order_relaxed);
+    *     if (st.health == FeedHealth::HEALTHY) {
+    *         breaker_.reset(st.venue);
+    *     } else {
+    *         breaker_.trip(st.venue, st.reason); // stop consuming this venue
+    *     }
+    * }
+    * @endcode
+    */
+    struct IHealthSink {
+        virtual ~IHealthSink() = default;
+        virtual void on_feed_status(const FeedStatus& st) = 0;
+    };
+
+    /**
+     * @struct HandlerStats
+     * @brief Lightweight counters/latencies for observability.
+     *
+     * Intended for snapshots (pull) rather than a high-rate stream.
+     * Units are implementation-defined; keep them consistent within a process.
+     */
+    struct HandlerStats {
+        // Traffic
+        std::uint64_t frames_in{0};        ///< raw frames/messages from wire
+        std::uint64_t bytes_in{0};         ///< uncompressed bytes (if known)
+        std::uint64_t snapshots_out{0};    ///< OrderBookSnapshot emitted
+        std::uint64_t deltas_out{0};       ///< OrderBookDelta emitted
+        std::uint64_t trades_out{0};       ///< TradeTick emitted
+
+        // Reliability
+        std::uint64_t reconnects{0};
+        std::uint64_t resyncs{0};
+        std::uint64_t gaps_detected{0};
+        std::uint64_t drops_conflation{0}; ///< number of merged/dropped updates due to conflation/backpressure
+
+        // Timing (nanoseconds)
+        std::uint64_t p50_decode_ns{0};
+        std::uint64_t p99_decode_ns{0};
+        std::uint64_t p50_end_to_end_ns{0}; ///< decode→emit
+        std::uint64_t p99_end_to_end_ns{0};
+    };
+
+    /**
+     * @struct SeqInfo
+     * @brief Per-instrument sequencing snapshot for debugging/ops.
+     */
+    struct SeqInfo {
+        InstrumentId  inst{0};
+        std::uint64_t last_seq{0};
+        std::uint64_t snapshot_ver{0};
+        std::uint32_t buffered{0};     ///< # of incrementals buffered awaiting order
+        std::int64_t  last_ts_recv_ns{0};
+    };
+
+    /**
+     * @class IFeedHandler
+     * @brief Exchange-agnostic market-data ingress for one venue.
+     *
+     * Responsibilities:
+     *  - Connect WebSocket MD, subscribe to channels/instruments.
+     *  - Snapshot→replay→stream handshake to ensure a correct lineage.
+     *  - Normalize to ticks/lots; enforce strict seq ordering; detect gaps; resync.
+     *  - Emit snapshots/deltas/trades to the BookWriter sink; emit health updates.
+     *
+     * Threading:
+     *  - Methods are non-blocking control-plane calls unless noted.
+     *  - Callbacks run on the handler’s I/O thread; do not block them.
+     */
+    class IFeedHandler {
+    public:
+        virtual ~IFeedHandler() = default;
+
+        /**
+         * Identity & lifecycle
+        */
+        [[nodiscard]] virtual VenueId     venue_id()   const = 0;  ///< Static venue id.
+        [[nodiscard]] virtual std::string venue_name() const = 0;  ///< Human-readable label.
+
+        /**
+         * @brief Initialize from external config (no network I/O).
+         * @return Status::OK if accepted; otherwise error code.
+         */
+        [[nodiscard]] virtual Status init(const FeedHandlerConfig& cfg) = 0;
+
+        /**
+         * @brief Start network I/O and perform snapshot→replay handshake.
+         * Non-blocking; results arrive via sinks.
+         */
+        [[nodiscard]] virtual Status start() = 0;
+
+        /// Request graceful shutdown; non-blocking.
+        virtual void   stop()  = 0;
+
+        /// Block until the handler has fully stopped (optional convenience).
+        virtual void   join()  = 0;
+
+        [[nodiscard]] virtual bool  is_running() const = 0;
+        [[nodiscard]] virtual State state()      const = 0;
+
+        // Wiring sinks
+        virtual void set_book_sink(IBookWriterSink* sink) = 0;
+        virtual void set_health_sink(IHealthSink* sink)   = 0;
+
+        // Subscriptions (symbols & channels)
+        /**
+         * @brief Replace the entire watch list. Implementation should unsubscribe
+         * removed instruments and subscribe+handshake added ones (rate-limited).
+         */
+        [[nodiscard]] virtual Status set_instruments(const std::vector<InstrumentId>& full_set) = 0;
+
+        /// Incremental add/remove.
+        [[nodiscard]] virtual Status add_instruments(const std::vector<InstrumentId>& add)       = 0;
+        [[nodiscard]] virtual Status remove_instruments(const std::vector<InstrumentId>& remove) = 0;
+
+        /// Change subscribed channels (e.g., DEPTH_L2 | TRADES). May resubscribe.
+        [[nodiscard]] virtual Status set_channels(ChannelsMask channels) = 0;
+
+        // Snapshot / resync controls
+        /// Force snapshot→replay for one instrument (bumps snapshot_ver).
+        [[nodiscard]] virtual Status request_snapshot(InstrumentId id) = 0;
+        /// Force snapshot→replay for all current instruments (rate-limited).
+        [[nodiscard]] virtual Status request_snapshot_all() = 0;
+        /// Force resync (enter RESYNCING immediately) with a reason tag.
+        [[nodiscard]] virtual Status force_resync(InstrumentId id, const std::string& reason) = 0;
+        [[nodiscard]] virtual Status force_resync_all(const std::string& reason) = 0;
+
+        // Runtime tuning (hot)
+        [[nodiscard]] virtual Status set_depth_k(std::uint16_t k) = 0;
+        [[nodiscard]] virtual Status set_conflation(bool enabled, std::chrono::milliseconds window) = 0;
+        [[nodiscard]] virtual Status set_timeouts(const Timeouts& t) = 0;
+        [[nodiscard]] virtual Status set_reconnect_backoff(const Backoff& b) = 0;
+        [[nodiscard]] virtual Status set_snapshot_backoff(const Backoff& b)  = 0;
+        [[nodiscard]] virtual Status set_reorder_buffer(std::size_t capacity) = 0;
+        [[nodiscard]] virtual Status set_snapshot_source(SnapshotSource src) = 0;
+
+        /// Update filters for one instrument (should bump snapshot_ver + resync).
+        [[nodiscard]] virtual Status set_filters(InstrumentId id, const Filters& f) = 0;
+
+        /// Bulk filters update; implementers may apply per-instrument resyncs.
+        [[nodiscard]] virtual Status set_filters_bulk(const std::vector<std::pair<InstrumentId, Filters>>& all) = 0;
+
+        // Security (usually static; may require reconnect)
+        [[nodiscard]] virtual Status set_tls(bool enabled) = 0;
+        [[nodiscard]] virtual Status set_cert_pins(const std::vector<std::string>& spki_pins) = 0;
+
+        // Inspection
+        [[nodiscard]] virtual FeedStatus                 current_status() const = 0;
+        [[nodiscard]] virtual HandlerStats               stats()          const = 0;
+        [[nodiscard]] virtual SeqInfo                    seq_info(InstrumentId id) const = 0;
+        [[nodiscard]] virtual std::vector<InstrumentId>  instruments()    const = 0;
+        [[nodiscard]] virtual ChannelsMask               channels()       const = 0;
+
+        // Instrument mapping helpers
+        [[nodiscard]] virtual InstrumentId resolve_symbol(std::string_view venue_symbol) const = 0;
+        [[nodiscard]] virtual std::string  symbol_for(InstrumentId id) const = 0;
+
+        // Maintenance / networking
+        [[nodiscard]] virtual Status reconnect_now() = 0;   ///< Tear down and reconnect (safe-guarded).
+        [[nodiscard]] virtual Status rotate_endpoint() = 0; ///< Switch to next failover WS URL.
+    };
 }
