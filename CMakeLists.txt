@@ -1,3 +1,5 @@
+# Top-level CMakeLists
+
 cmake_minimum_required(VERSION 3.28)
 project(pop LANGUAGES CXX)
 
@@ -9,7 +11,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(pop
         app/main.cpp
         src/utils.cpp
-        include/feed_handler.h
 )
 
 # include headers from include/
