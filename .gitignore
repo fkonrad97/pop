@@ -39,9 +39,5 @@
 
 # debug information files
 *.dwo
-/whitepaper/figures/
-/whitepaper/whitepaper-0.1_files/
-/whitepaper/whitepaper-0.1.html
-/whitepaper/whitepaper-0.1.qmd
-/cmake-build-debug/
 /.idea
+/whitepaper/*
