@@ -7,10 +7,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # main executable
 add_executable(pop
-        src/main.cpp
+        app/main.cpp
         src/utils.cpp
-        include/utils.h
-        src/utils.cpp)
+        include/feed_handler.h
+)
 
 # include headers from include/
 target_include_directories(pop PRIVATE include)
