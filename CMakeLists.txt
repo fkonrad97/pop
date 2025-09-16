@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.20)
 
 # -----------------------------------------------------------------------------
 # CMake policy & Boost discovery
@@ -6,7 +6,9 @@ cmake_minimum_required(VERSION 3.28)
 # CMP0167 NEW => CMake no longer uses the deprecated FindBoost module.
 # It will use Boost's official CMake package config (CONFIG mode) instead.
 # This silences the 3.28+ warning and ensures modern Boost:: targets.
-cmake_policy(SET CMP0167 NEW)
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 NEW)
+endif()
 
 project(pop LANGUAGES CXX)
 
