@@ -1,5 +1,6 @@
 add_executable(pop_tests
         feed_handler_test.cpp
+        ../src/binance_feed_handler.cpp
 )
 
 # pop_core exports include/ as PUBLIC, so no extra include dirs needed
