@@ -46,3 +46,4 @@
 .vscode/launch.json
 .gitignore
 .vscode/tasks.json
+CMakePresets.json
