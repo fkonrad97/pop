@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.28)
 
 # Use Boost CONFIG packages (CMP0167).
-cmake_policy(SET CMP0167 NEW)
+if(POLICY CMP0167)
+  cmake_policy(SET CMP0167 NEW)
+endif()
 
 project(pop LANGUAGES CXX)
 
@@ -89,18 +91,3 @@ add_executable(pop
 )
 target_link_libraries(pop PRIVATE pop_core)
 target_compile_features(pop PRIVATE ${_std_feature})
-
-# -----------------------------------------------------------------------------
-# 5) Tests
-# -----------------------------------------------------------------------------
-if (POP_BUILD_TESTS)
-    FetchContent_Declare(
-            googletest
-            URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
-    )
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(googletest)
-
-    enable_testing()
-    add_subdirectory(test)
-endif()

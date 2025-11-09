@@ -43,3 +43,6 @@
 /whitepaper/*
 /build/
 /cmake-build-debug/
+.vscode/launch.json
+.gitignore
+.vscode/tasks.json
