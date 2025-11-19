@@ -10,8 +10,80 @@
 
 #include "feed_handler.hpp"
 #include "rest_client.hpp"
-#include "venue_factory.hpp"
+#include "venue_util.hpp"
 #include "ws_client.hpp"
+#include "order_book.hpp"
+
+using json = nlohmann::json;
+
+// ---------------------------
+// Cmdline parsing helpers
+// ---------------------------
+
+struct CmdOptions {
+    std::string venue   = "BINANCE";   // default
+    std::string symbol  = "BTCUSDT";   // default
+    std::string target  = "depth5";     // logical stream descriptor
+    std::string host;                  // optional override
+    std::string port;                  // optional override
+    bool show_help = false;
+};
+
+static void print_usage(const char* prog) {
+    std::cout <<
+        "Usage: " << prog << " [options]\n\n"
+        "Options:\n"
+        "  -v, --venue  <name>    Venue name (BINANCE, OKX). Default: BINANCE\n"
+        "  -s, --symbol <sym>     Symbol, e.g. BTCUSDT. Default: BTCUSDT\n"
+        "  -t, --target <stream>  Logical stream/target. Examples:\n"
+        "                         - depth          (default)\n"
+        "                         - depth5@100ms  (Binance: depth 5 @ 100ms)\n"
+        "                         - depth-tbt     (OKX: books-l2-tbt)\n"
+        "      --host   <host>    Override WS host (optional)\n"
+        "      --port   <port>    Override WS port (optional)\n"
+        "  -h, --help             Show this help and exit\n\n"
+        "Examples:\n"
+        "  " << prog << " --venue BINANCE --symbol BTCUSDT --target depth5@100ms\n"
+        "  " << prog << " --venue OKX --symbol btcusdt --target depth\n";
+}
+
+static bool parse_cmdline(int argc, char** argv, CmdOptions& opt) {
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+
+        auto need_value = [&](const char* name) -> char* {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value for " << name << "\n";
+                return nullptr;
+            }
+            return argv[++i];
+        };
+
+        if (arg == "-h" || arg == "--help") {
+            opt.show_help = true;
+            return true;
+        } else if (arg == "-v" || arg == "--venue") {
+            if (auto* v = need_value(arg.c_str())) opt.venue = v;
+            else return false;
+        } else if (arg == "-s" || arg == "--symbol") {
+            if (auto* v = need_value(arg.c_str())) opt.symbol = v;
+            else return false;
+        } else if (arg == "-t" || arg == "--target") {
+            if (auto* v = need_value(arg.c_str())) opt.target = v;
+            else return false;
+        } else if (arg == "--host") {
+            if (auto* v = need_value(arg.c_str())) opt.host = v;
+            else return false;
+        } else if (arg == "--port") {
+            if (auto* v = need_value(arg.c_str())) opt.port = v;
+            else return false;
+        } else {
+            std::cerr << "Unknown argument: " << arg << "\n";
+            return false;
+        }
+    }
+    return true;
+}
 
 void test_ws_client(boost::asio::io_context &, const std::shared_ptr<md::WsClient> &);
 
@@ -20,14 +92,48 @@ void test_rest_client(boost::asio::io_context &, const std::shared_ptr<md::WsCli
 
 int test_binance_feed_handler(boost::asio::io_context &);
 
-int main() {
-    boost::asio::io_context ioc;
-    const auto rest = std::make_shared<md::RestClient>(ioc);
-    const auto ws = std::make_shared<md::WsClient>(ioc);
+void test_order_book_basic();
 
-    test_rest_client(ioc, ws, rest);
-    // test_ws_client(ioc, ws);
-    // test_binance_feed_handler(ioc);
+int main(int argc, char** argv) {
+    CmdOptions options;
+    if (!parse_cmdline(argc, argv, options)) {
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    if (options.show_help) {
+        print_usage(argv[0]);
+        return 0;
+    }
+
+    // Build FeedHandlerConfig from CLI
+    md::FeedHandlerConfig cfg;
+    cfg.venue_name = options.venue;
+    cfg.symbol     = options.symbol;
+    cfg.host_name  = options.host;   // may be empty → venue defaults
+    cfg.port       = options.port;   // may be empty → venue defaults
+    cfg.target     = options.target; // logical stream, mapped per venue
+
+    boost::asio::io_context ioc;
+
+    // Use your utility factory
+    auto fh = md::venue::createFeedHandler(ioc, cfg);
+    if (!fh) {
+        std::cerr << "Failed to create/init feed handler for venue '"
+                  << cfg.venue_name << "'\n";
+        return 1;
+    }
+
+    if (fh->start() != md::Status::OK) {
+        std::cerr << "Failed to start feed handler\n";
+        return 1;
+    }
+
+    // Run until Ctrl+C or connection close
+    std::cout << "Starting event loop for "
+              << cfg.venue_name << " " << cfg.symbol
+              << " [" << cfg.target << "]\n";
+    ioc.run();
 
     return 0;
 }
@@ -55,7 +161,7 @@ void test_ws_client(boost::asio::io_context &ioc, const std::shared_ptr<md::WsCl
 
     const std::string host = "stream.binance.com";
     const std::string port = "9443";
-    const std::string target = "/ws/" + symbol + "@depth3"; // or "@depth@100ms", "@aggTrade", etc.
+    const std::string target = "/ws/" + symbol + "@depth5";
 
     // 4) Start the async connect chain
     ws->connect(host, port, target);
@@ -79,15 +185,15 @@ void test_rest_client(boost::asio::io_context &ioc,
                       const std::shared_ptr<md::RestClient> &rest_init) {
     using json = nlohmann::json;
 
-    const std::string symbol      = "BTCUSDT";
-    const std::string rest_host   = "api.binance.com";
-    const std::string rest_port   = "443";
+    const std::string symbol = "BTCUSDT";
+    const std::string rest_host = "api.binance.com";
+    const std::string rest_port = "443";
     const std::string rest_target = "/api/v3/depth?symbol=" + symbol + "&limit=1000";
 
     std::deque<json> ws_buffer;
     uint64_t lastUpdateId = 0;
-    bool snapshot_ready   = false;
-    bool rest_busy        = false;
+    bool snapshot_ready = false;
+    bool rest_busy = false;
     std::chrono::steady_clock::time_point last_resync_time;
 
     //-------------------------------------------------------
@@ -104,9 +210,6 @@ void test_rest_client(boost::asio::io_context &ioc,
             std::stringstream(m) >> msg;
             if (!msg.contains("U") || !msg.contains("u")) return;
 
-            uint64_t U = msg["U"].get<uint64_t>();
-            uint64_t u = msg["u"].get<uint64_t>();
-
             ws_buffer.push_back(msg);
 
             if (snapshot_ready) {
@@ -122,7 +225,7 @@ void test_rest_client(boost::asio::io_context &ioc,
                         std::cout << "[WS] Applied update, last=" << lastUpdateId << "\n";
                     } else if (U2 > lastUpdateId + 1) {
                         std::cerr << "[WS] GAP detected! U=" << U2
-                                  << " last=" << lastUpdateId << " → resyncing...\n";
+                                << " last=" << lastUpdateId << " → resyncing...\n";
                         if (resync) resync();
                         return;
                     }
@@ -159,50 +262,50 @@ void test_rest_client(boost::asio::io_context &ioc,
         // create a fresh RestClient every time to avoid SSL reuse errors
         auto rest = std::make_shared<md::RestClient>(ioc);
         rest->async_get(rest_host, rest_target, rest_port,
-            [&](const boost::system::error_code &ec, const std::string &body) {
-                rest_busy = false;
+                        [&](const boost::system::error_code &ec, const std::string &body) {
+                            rest_busy = false;
 
-                if (ec) {
-                    std::cerr << "[REST] error: " << ec.message() << "\n";
-                    return;
-                }
+                            if (ec) {
+                                std::cerr << "[REST] error: " << ec.message() << "\n";
+                                return;
+                            }
 
-                json snap;
-                std::stringstream(body) >> snap;
-                lastUpdateId = snap["lastUpdateId"].get<uint64_t>();
-                snapshot_ready = true;
+                            json snap;
+                            std::stringstream(body) >> snap;
+                            lastUpdateId = snap["lastUpdateId"].get<uint64_t>();
+                            snapshot_ready = true;
 
-                std::cout << "[REST] Snapshot loaded. lastUpdateId=" << lastUpdateId << "\n";
-                if (snap.contains("bids") && snap.contains("asks"))
-                    std::cout << "[REST] Top bid: " << snap["bids"][0]
-                              << " | Top ask: " << snap["asks"][0] << "\n";
+                            std::cout << "[REST] Snapshot loaded. lastUpdateId=" << lastUpdateId << "\n";
+                            if (snap.contains("bids") && snap.contains("asks"))
+                                std::cout << "[REST] Top bid: " << snap["bids"][0]
+                                        << " | Top ask: " << snap["asks"][0] << "\n";
 
-                // Remove outdated WS messages
-                while (!ws_buffer.empty()) {
-                    auto &msg = ws_buffer.front();
-                    uint64_t u = msg["u"].get<uint64_t>();
-                    if (u <= lastUpdateId)
-                        ws_buffer.pop_front();
-                    else
-                        break;
-                }
+                            // Remove outdated WS messages
+                            while (!ws_buffer.empty()) {
+                                auto &msg = ws_buffer.front();
+                                uint64_t u = msg["u"].get<uint64_t>();
+                                if (u <= lastUpdateId)
+                                    ws_buffer.pop_front();
+                                else
+                                    break;
+                            }
 
-                // Apply first valid WS message
-                while (!ws_buffer.empty()) {
-                    auto msg = ws_buffer.front();
-                    ws_buffer.pop_front();
+                            // Apply first valid WS message
+                            while (!ws_buffer.empty()) {
+                                auto msg = ws_buffer.front();
+                                ws_buffer.pop_front();
 
-                    uint64_t U = msg["U"].get<uint64_t>();
-                    uint64_t u = msg["u"].get<uint64_t>();
+                                uint64_t U = msg["U"].get<uint64_t>();
+                                uint64_t u = msg["u"].get<uint64_t>();
 
-                    if (U <= lastUpdateId + 1 && u >= lastUpdateId) {
-                        lastUpdateId = u;
-                        std::cout << "[SYNC] First update applied. lastUpdateId=" << lastUpdateId << "\n";
-                    }
-                }
+                                if (U <= lastUpdateId + 1 && u >= lastUpdateId) {
+                                    lastUpdateId = u;
+                                    std::cout << "[SYNC] First update applied. lastUpdateId=" << lastUpdateId << "\n";
+                                }
+                            }
 
-                std::cout << "[SYNC] Snapshot + WS now aligned ✅\n";
-            });
+                            std::cout << "[SYNC] Snapshot + WS now aligned\n";
+                        });
     };
 
     //-------------------------------------------------------
@@ -231,11 +334,95 @@ int test_binance_feed_handler(boost::asio::io_context &ioc) {
     cfg.port = "9443";
     cfg.target = "depth@100ms";
 
-    auto fh = md::VenueFactory::create(ioc, cfg);
+    auto fh = md::venue::createFeedHandler(ioc, cfg);
     if (!fh) return 1;
 
     if (fh->start() != md::Status::OK) return 1;
 
     ioc.run();
     return 0;
+}
+
+void test_order_book_basic() {
+    md::OrderBookManager<> mgr;
+    auto &ob = mgr.getOrCreate("BINANCE", "BTCUSDT", /*depth*/5);
+
+    // --- Snapshot (depth5-style) ---
+    // Keep arrays as strings (Binance sends strings for price/qty)
+    const std::string snapshotStr = R"({
+        "lastUpdateId": 1000,
+        "bids": [
+            ["110346.59","5.02415"],
+            ["110346.56","0.00010"],
+            ["110346.55","0.05020"],
+            ["110346.51","0.00020"],
+            ["110346.50","0.05020"]
+        ],
+        "asks": [
+            ["110346.60","0.91219"],
+            ["110346.61","0.00097"],
+            ["110346.68","0.01000"],
+            ["110346.70","1.23400"],
+            ["110346.75","0.10000"]
+        ]
+    })";
+
+    json snap = json::parse(snapshotStr);
+    ob.applySnapshot(snap);
+
+    // --- Delta (depth stream) ---
+    // Must satisfy Binance gating: U <= last+1 and u >= last+1 (last=1000 here)
+    const std::string deltaStr = R"({
+        "e":"depthUpdate",
+        "E":1762021095014,
+        "s":"BTCUSDT",
+        "U":1001,
+        "u":1003,
+        "b":[
+            ["110346.59","4.50000"],
+            ["110346.40","1.00000"]
+        ],
+        "a":[
+            ["110346.60","0.00000"],
+            ["110347.00","2.00000"]
+        ]
+    })";
+
+    json del = json::parse(deltaStr);
+    bool ok = ob.applyDelta(del);
+    if (!ok) {
+        std::cout << "[RESYNC] Gap detected; would fetch a new snapshot here.\n";
+        return;
+    }
+
+    // --- Print results ---
+    auto tob = ob.top();
+    std::cout << "=== Top of Book ===\n";
+    if (tob.bestBid) std::cout << "BestBid: " << tob.bestBid->px << " x " << tob.bestBid->qty << "\n";
+    if (tob.bestAsk) std::cout << "BestAsk: " << tob.bestAsk->px << " x " << tob.bestAsk->qty << "\n";
+    std::cout << "lastUpdateId: " << ob.lastUpdateId() << "\n\n";
+
+    // Print top-N levels
+    const std::size_t N = 5;
+    std::cout << "=== Top " << N << " Bids ===\n";
+    for (const auto &L: ob.levels(md::Side::Bid, N)) {
+        std::cout << "BID " << L.px << " " << L.qty << "\n";
+    }
+    std::cout << "=== Top " << N << " Asks ===\n";
+    for (const auto &L: ob.levels(md::Side::Ask, N)) {
+        std::cout << "ASK " << L.px << " " << L.qty << "\n";
+    }
+
+    // Quick negative test: an old delta (should be ignored, not error)
+    const std::string oldDelta = R"({
+        "e":"depthUpdate","E":1762021095015,"s":"BTCUSDT",
+        "U":999, "u":999,
+        "b":[["110000.00","1.0"]],
+        "a":[]
+    })";
+    if (ob.applyDelta(json::parse(oldDelta))) {
+        std::cout << "[WARN] old delta unexpectedly applied\n";
+    } else {
+        std::cout << "[INFO] old delta ignored or gap; current lastUpdateId=" << ob.lastUpdateId() << "\n";
+    }
 }

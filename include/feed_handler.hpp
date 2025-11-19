@@ -14,7 +14,7 @@ namespace md {
      *
      * Note: For async chains, detailed errors should be reported via logs/callbacks, not just this enum.
      */
-    enum class Status { OK, ERROR };
+    enum class Status { OK, ERROR, HEALTHY, DEGRADED, DISCONNECTED, RESYNCED, SYNCHING, CLOSED };
 
     /**
      * @brief Minimal configuration for a venue feed.
@@ -25,12 +25,26 @@ namespace md {
      *  - timeouts, heartbeat, backoff policy
      */
     struct FeedHandlerConfig {
-        std::string venue_name;  ///< Human-readable label, e.g. "BINANCE".
-        std::string symbol;      ///< Single symbol for PoC (e.g., "BTCUSDT").
-        std::string host_name;   ///< e.g.: "stream.binance.com"
-        std::string port;        ///< e.g.: "9443"
-        std::string target;      ///< e.g.: "/ws/" + cfg_.symbol + "@depth10@100ms"
+        std::string venue_name;  ///< e.g. "BINANCE", "OKX"
+        std::string symbol;      ///< Logical symbol, e.g. "BTCUSDT"
+        std::string host_name;   ///< Optional override. If empty, venue default is used.
+        std::string port;        ///< Optional override. If empty, venue default is used.
+
+        /**
+         * @brief Logical stream / channel descriptor.
+         *
+         * Examples:
+         *   - "depth"           → venue-specific default depth stream
+         *   - "depth5@100ms"    → Binance: depth 5 @ 100ms
+         *   - "trades"          → trade stream
+         *
+         * Each venue is responsible for mapping this logical string to:
+         *   - actual WS URL path (e.g. "/ws/btcusdt@depth5@100ms")
+         *   - or WS channel name + fixed URL (OKX: "/ws/v5/public" + {"channel": "..."}).
+         */
+        std::string target;
     };
+
 
     /**
      * @brief Abstract interface for a venue-specific feed handler.
@@ -55,7 +69,7 @@ namespace md {
         virtual Status start() = 0;
 
         /// Gracefully stop: close sockets and cancel timers. Safe to call multiple times.
-        virtual void   stop() = 0;
+        virtual Status stop() = 0;
 
         virtual bool is_running() const = 0;
     };
