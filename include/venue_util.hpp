@@ -20,8 +20,10 @@ namespace md {
 
     std::unique_ptr<IVenueFeedHandler> make_bitget_feed_handler(boost::asio::io_context &ioc);
 
+    std::unique_ptr<IVenueFeedHandler> make_kucoin_feed_handler(boost::asio::io_context &ioc);
+
     namespace venue {
-        enum class VenueId { BINANCE, OKX, BYBIT, BITGET, UNKNOWN };
+        enum class VenueId { BINANCE, OKX, BYBIT, BITGET, KUCOIN, UNKNOWN };
 
         inline VenueId to_venue_id(const std::string &name) {
             std::string v = name;
@@ -31,6 +33,7 @@ namespace md {
             if (v == "okx")     return VenueId::OKX;
             if (v == "bybit")   return VenueId::BYBIT;
             if (v == "bitget")  return VenueId::BITGET;
+            if (v == "kucoin")  return VenueId::KUCOIN;
             return VenueId::UNKNOWN;
         }
 
@@ -54,6 +57,7 @@ namespace md {
             if (v == "okx")     handler = make_okx_feed_handler(ioc);
             if (v == "bybit")   handler = make_bybit_feed_handler(ioc);
             if (v == "bitget")  handler = make_bitget_feed_handler(ioc);
+            if (v == "kucoin")  handler = make_kucoin_feed_handler(ioc);
 
             if (!handler) {
                 return nullptr; // unknown venue
@@ -83,6 +87,9 @@ namespace md {
                     return boost::algorithm::to_upper_copy(concatSymbol);
                 case VenueId::BITGET:
                     return boost::algorithm::to_upper_copy(concatSymbol);
+                case VenueId::KUCOIN:
+                    // KuCoin topics use "BTC-USDT"
+                    return boost::algorithm::to_upper_copy(sym);
                 default:
                     throw std::invalid_argument("Invalid Venue_ID/Symbol");
             }
@@ -172,6 +179,30 @@ namespace md {
             return logical;
         }
 
+        inline std::string logical_to_kucoin_depth_topic(const std::string &logical,
+                                                 const std::string &symbol_upper_with_dash) {
+            // Default: 5-level spot orderbook
+            // "" / "depth" / "depth5" → "/spotMarket/level2Depth5:BTC-USDT"
+            std::string l = logical;
+            boost::algorithm::to_lower(l);
+
+            if (l.empty() || l == "depth" || l == "depth5") {
+                return "/spotMarket/level2Depth5:" + symbol_upper_with_dash;
+            }
+
+            if (l == "depth50") {
+                return "/spotMarket/level2Depth50:" + symbol_upper_with_dash;
+            }
+
+            // if caller directly provides a KuCoin topic, just return it
+            if (!l.empty() && l[0] == '/') {
+                return logical;
+            }
+
+            // Fallback: treat logical as a suffix under /spotMarket/
+            return "/spotMarket/" + logical + ":" + symbol_upper_with_dash;
+        }
+
 
         // --- 4) High-level helper for WS target / channel construction ---
 
@@ -202,6 +233,11 @@ namespace md {
                 case VenueId::BITGET: {
                     // Return channel *only* ("books5", "books15", ...)
                     return logical_to_bitget_depth_channel(logical_target);
+                }
+                case VenueId::KUCOIN: {
+                    // Build full topic string, e.g. "/spotMarket/level2Depth5:BTC-USDT"
+                    std::string kucoin_sym = map_ws_symbol(VenueId::KUCOIN, symbol);
+                    return logical_to_kucoin_depth_topic(logical_target, kucoin_sym);
                 }
                 default:
                     return logical_target;
