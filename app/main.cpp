@@ -328,7 +328,7 @@ void test_rest_client(boost::asio::io_context &ioc,
 
 int test_binance_feed_handler(boost::asio::io_context &ioc) {
     md::FeedHandlerConfig cfg;
-    cfg.venue_name = "BINANCE";
+    cfg.venue__name = "BINANCE";
     cfg.symbol = "btcusdt";
     cfg.host_name = "stream.binance.com";
     cfg.port = "9443";

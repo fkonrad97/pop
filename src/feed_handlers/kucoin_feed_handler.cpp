@@ -26,7 +26,7 @@ namespace md {
             cfg_ = cfg;
 
             ws_->set_on_message([this](const std::string &msg) {
-                // Use fast KucoinStreamParser (simdjson) instead of nlohmann here
+                // Use KucoinStreamParser (simdjson)
                 auto maybe_book = parser_->parse_depth5(msg);
                 if (!maybe_book) {
                     // DEBUG: show the raw message when parsing fails

@@ -9,6 +9,7 @@
 
 #include "venue_util.hpp"
 #include "abstract/stream_parser.hpp"
+#include "stream_parser/binance_stream_parser.hpp"
 
 using json = nlohmann::json;
 
@@ -83,7 +84,8 @@ namespace md {
     class BinanceFeedHandler final : public IVenueFeedHandler {
     public:
         explicit BinanceFeedHandler(boost::asio::io_context &ioc)
-            : ioc_(ioc), ws_(std::make_shared<WsClient>(ioc)) {
+        : ioc_(ioc), ws_(std::make_shared<WsClient>(ioc)),
+          parser_(std::make_unique<BinanceStreamParser>()) {
         }
 
         Status init(const FeedHandlerConfig &cfg) override {
@@ -93,12 +95,22 @@ namespace md {
 
             // Bind WS callbacks
             ws_->set_on_message([this](const std::string &msg) {
-                json jsonObj;
-                std::stringstream(msg) >> jsonObj;
-                std::cout << msg << "\n";
-                // auto h = std::hash<json>{}(jsonObj["asks"]);
-                // std::cout << h << "\n";
-                std::cout << "\n";
+                auto maybe_book = parser_->parse_depth5(msg);
+                if (!maybe_book) {
+                    // DEBUG: show the raw message when parsing fails
+                    std::cout << "[BINANCE][PARSE_FAIL] msg = " << msg << "\n";
+                    return;
+                }
+
+                Depth5Book book = std::move(*maybe_book);
+                book.receive_ts = std::chrono::system_clock::now();
+
+                // For now: debug print; later: push to central brain / orderbook
+                std::cout << "[BINANCE][BOOK] "
+                        << book.symbol << " "
+                        << "best_bid=" << book.best_bid()
+                        << " best_ask=" << book.best_ask()
+                        << "\n";
             });
 
             ws_->set_on_close([this]() {
@@ -127,8 +139,6 @@ namespace md {
                 cfg_.target // e.g. "depth5@100ms" or "depth"
             );
 
-            std::cout<<"String target :: " << std::endl<<target<<std::endl;
-
             std::cout << "[BINANCE] Connecting to wss://"
                     << host << ":" << port << "/" << target << "\n";
 
@@ -149,6 +159,7 @@ namespace md {
 
         boost::asio::io_context &ioc_;
         std::shared_ptr<WsClient> ws_;
+        std::unique_ptr<IStreamParser> parser_;
         FeedHandlerConfig cfg_{};
         std::atomic<bool> running_{false};
         Clock::time_point last_msg_ts_{};

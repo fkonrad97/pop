@@ -10,6 +10,8 @@
 #include <atomic>
 #include <sstream>
 
+#include "stream_parser/okx_stream_parser.hpp"
+
 using json = nlohmann::json;
 
 namespace md {
@@ -18,7 +20,8 @@ namespace md {
     public:
         explicit OkxFeedHandler(boost::asio::io_context &ioc)
             : ioc_(ioc),
-              ws_(std::make_shared<WsClient>(ioc)) {}
+        ws_(std::make_shared<WsClient>(ioc)),
+    parser_(std::make_unique<OkxStreamParser>()) {}
 
         Status init(const FeedHandlerConfig &cfg) override {
             if (running_.load()) return Status::ERROR;
@@ -36,10 +39,22 @@ namespace md {
             );
 
             ws_->set_on_message([this](const std::string &msg) {
-                json jsonObj;
-                std::stringstream(msg) >> jsonObj;
-                std::cout << msg << "\n\n";
-                // TODO: route to orderbook instead of printing
+                auto maybe_book = parser_->parse_depth5(msg);
+                if (!maybe_book) {
+                    // DEBUG: show the raw message when parsing fails
+                    std::cout << "[OKX][PARSE_FAIL] msg = " << msg << "\n";
+                    return;
+                }
+
+                Depth5Book book = std::move(*maybe_book);
+                book.receive_ts = std::chrono::system_clock::now();
+
+                // For now: debug print; later: push to central brain / orderbook
+                std::cout << "[OKX][BOOK] "
+                        << book.symbol << " "
+                        << "best_bid=" << book.best_bid()
+                        << " best_ask=" << book.best_ask()
+                        << "\n";
             });
 
             ws_->set_on_close([this]() {
@@ -98,6 +113,7 @@ namespace md {
     private:
         boost::asio::io_context &ioc_;
         std::shared_ptr<WsClient> ws_;
+        std::unique_ptr<IStreamParser> parser_;
         FeedHandlerConfig cfg_{};
         std::atomic<bool> running_{false};
 
