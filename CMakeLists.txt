@@ -38,10 +38,13 @@ FetchContent_MakeAvailable(nlohmann_json)
 # 3) Core library
 # -----------------------------------------------------------------------------
 add_library(pop_core STATIC
-        src/binance_feed_handler.cpp
+        src/feed_handlers/binance_feed_handler.cpp
+        src/feed_handlers/okx_feed_handler.cpp
+        src/feed_handlers/bybit_feed_handler.cpp
+        src/feed_handlers/bitget_feed_handler.cpp
+        src/feed_handlers/kucoin_feed_handler.cpp
         src/rest_client.cpp
         src/ws_client.cpp
-        src/venue_factory.cpp
 )
 
 # public headers live in include/

@@ -72,6 +72,12 @@ namespace md {
                        std::string port,
                        ResponseHandler cb);
 
+        void async_post(std::string host,
+                std::string target,
+                std::string port,
+                std::string body,
+                ResponseHandler cb);
+
     private:
         // =====================
         // Chain step helpers

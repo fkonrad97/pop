@@ -43,6 +43,8 @@ namespace md {
         /// Called when the connection closes or any terminal error occurs (exactly once).
         using CloseHandler   = std::function<void()>;
 
+        using OpenHandler    = std::function<void()>;   // NEW
+
         /**
          * @brief Bind the client to the external event loop.
          * @param ioc The shared process-level io_context that drives all async I/O.
@@ -74,6 +76,10 @@ namespace md {
 
         /// Attach a user handler for close/loss-of-connection notification.
         void set_on_close(CloseHandler h);
+
+        void set_on_open(OpenHandler h);
+
+        void send_text(const std::string& text);
 
         /**
          * @brief Initiate a graceful shutdown sequence.
@@ -123,6 +129,7 @@ namespace md {
         /// User-supplied callbacks (optional).
         MessageHandler on_message_;
         CloseHandler   on_close_;
+        OpenHandler   on_open_;
 
         // =====================
         // Chain step helpers

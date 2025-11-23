@@ -37,6 +37,27 @@ namespace md {
     void WsClient::set_on_message(MessageHandler h) { on_message_ = std::move(h); }
     void WsClient::set_on_close(CloseHandler h) { on_close_ = std::move(h); }
 
+    void WsClient::set_on_open(OpenHandler h) {
+        on_open_ = std::move(h);
+    }
+
+    void WsClient::send_text(const std::string& text) {
+        auto self = shared_from_this();
+
+        ws_.async_write(
+            boost::asio::buffer(text),
+            [self](const beast::error_code &ec, std::size_t /*bytes_transferred*/) {
+                if (ec) {
+                    std::cerr << "[WsClient] write error: " << ec.message() << "\n";
+                    if (self->on_close_) {
+                        self->on_close_();
+                    }
+                }
+            }
+        );
+    }
+
+
     void WsClient::connect(const std::string &host,
                            const std::string &port,
                            const std::string &target) {
@@ -125,6 +146,11 @@ namespace md {
 
                                 // Text mode: Binance typically sends JSON text frames
                                 self->ws_.text(true);
+
+                                // notify "open"
+                                if (self->on_open_) {
+                                    self->on_open_();
+                                }
 
                                 // start reading frames
                                 self->do_read_();
