@@ -2,7 +2,7 @@
 
 #include "ws_client.hpp"
 #include "rest_client.hpp"
-#include "feed_handler.hpp"
+#include "abstract/feed_handler.hpp"
 #include "venue_util.hpp"
 
 #include <nlohmann/json.hpp>

@@ -8,7 +8,7 @@
 #include <deque>
 #include <sstream>
 
-#include "feed_handler.hpp"
+#include "../include/abstract/feed_handler.hpp"
 #include "rest_client.hpp"
 #include "venue_util.hpp"
 #include "ws_client.hpp"
@@ -341,88 +341,4 @@ int test_binance_feed_handler(boost::asio::io_context &ioc) {
 
     ioc.run();
     return 0;
-}
-
-void test_order_book_basic() {
-    md::OrderBookManager<> mgr;
-    auto &ob = mgr.getOrCreate("BINANCE", "BTCUSDT", /*depth*/5);
-
-    // --- Snapshot (depth5-style) ---
-    // Keep arrays as strings (Binance sends strings for price/qty)
-    const std::string snapshotStr = R"({
-        "lastUpdateId": 1000,
-        "bids": [
-            ["110346.59","5.02415"],
-            ["110346.56","0.00010"],
-            ["110346.55","0.05020"],
-            ["110346.51","0.00020"],
-            ["110346.50","0.05020"]
-        ],
-        "asks": [
-            ["110346.60","0.91219"],
-            ["110346.61","0.00097"],
-            ["110346.68","0.01000"],
-            ["110346.70","1.23400"],
-            ["110346.75","0.10000"]
-        ]
-    })";
-
-    json snap = json::parse(snapshotStr);
-    ob.applySnapshot(snap);
-
-    // --- Delta (depth stream) ---
-    // Must satisfy Binance gating: U <= last+1 and u >= last+1 (last=1000 here)
-    const std::string deltaStr = R"({
-        "e":"depthUpdate",
-        "E":1762021095014,
-        "s":"BTCUSDT",
-        "U":1001,
-        "u":1003,
-        "b":[
-            ["110346.59","4.50000"],
-            ["110346.40","1.00000"]
-        ],
-        "a":[
-            ["110346.60","0.00000"],
-            ["110347.00","2.00000"]
-        ]
-    })";
-
-    json del = json::parse(deltaStr);
-    bool ok = ob.applyDelta(del);
-    if (!ok) {
-        std::cout << "[RESYNC] Gap detected; would fetch a new snapshot here.\n";
-        return;
-    }
-
-    // --- Print results ---
-    auto tob = ob.top();
-    std::cout << "=== Top of Book ===\n";
-    if (tob.bestBid) std::cout << "BestBid: " << tob.bestBid->px << " x " << tob.bestBid->qty << "\n";
-    if (tob.bestAsk) std::cout << "BestAsk: " << tob.bestAsk->px << " x " << tob.bestAsk->qty << "\n";
-    std::cout << "lastUpdateId: " << ob.lastUpdateId() << "\n\n";
-
-    // Print top-N levels
-    const std::size_t N = 5;
-    std::cout << "=== Top " << N << " Bids ===\n";
-    for (const auto &L: ob.levels(md::Side::Bid, N)) {
-        std::cout << "BID " << L.px << " " << L.qty << "\n";
-    }
-    std::cout << "=== Top " << N << " Asks ===\n";
-    for (const auto &L: ob.levels(md::Side::Ask, N)) {
-        std::cout << "ASK " << L.px << " " << L.qty << "\n";
-    }
-
-    // Quick negative test: an old delta (should be ignored, not error)
-    const std::string oldDelta = R"({
-        "e":"depthUpdate","E":1762021095015,"s":"BTCUSDT",
-        "U":999, "u":999,
-        "b":[["110000.00","1.0"]],
-        "a":[]
-    })";
-    if (ob.applyDelta(json::parse(oldDelta))) {
-        std::cout << "[WARN] old delta unexpectedly applied\n";
-    } else {
-        std::cout << "[INFO] old delta ignored or gap; current lastUpdateId=" << ob.lastUpdateId() << "\n";
-    }
 }

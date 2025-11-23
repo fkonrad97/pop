@@ -1,6 +1,6 @@
 #pragma once
 
-#include "feed_handler.hpp"             // IVenueFeedHandler, Status, FeedHandlerConfig
+#include "abstract/feed_handler.hpp"
 #include <boost/asio/io_context.hpp>
 
 #include <memory>
@@ -108,8 +108,8 @@ namespace md {
          *   "depth5@100ms"  -> "@depth5@100ms"
          */
         inline std::string logical_to_binance_depth_suffix(const std::string &logical) {
-            if (logical.empty() || logical == "depth") {
-                return "@depth"; // Binance default depth stream
+            if (logical.empty() || logical == "depth5") {
+                return "@depth5"; // Binance default depth stream
             }
             if (!logical.empty() && logical.front() == '@') {
                 return logical; // already a suffix
@@ -126,7 +126,7 @@ namespace md {
          *   "books" / "books5" / "books-l2-tbt" -> used as-is.
          */
         inline std::string logical_to_okx_depth_channel(const std::string &logical) {
-            if (logical.empty() || logical == "depth") {
+            if (logical.empty() || logical == "depth5") {
                 return "books5";
             }
             return logical;
@@ -145,13 +145,9 @@ namespace md {
             boost::algorithm::to_lower(l);
 
             // Default: use 5 levels depth
-            if (l.empty() || l == "depth" || l == "depth5") {
+            if (l.empty() || l == "depth5") {
                 return "books5";
             }
-            if (l == "books")   return "books";
-            if (l == "books1")  return "books1";
-            if (l == "books5")  return "books5";
-            if (l == "books15") return "books15";
 
             // Fallback: let caller pass a raw channel name
             return logical;
@@ -162,17 +158,8 @@ namespace md {
             //   "" / "depth"    -> orderbook.1
             //   "depth5"        -> does not exist in bybit
             //   "depth50"       -> orderbook.50
-            //   "orderbook.5"   -> used as-is prefix (we'll append .SYMBOL outside)
-            if (logical.empty() || logical == "depth") {
-                return "orderbook.1";
-            }
-            if (logical.rfind("orderbook.", 0) == 0) {
-                return logical; // already an orderbook.* prefix
-            }
-            if (logical == "depth5") {
-                return "orderbook.5";
-            }
-            if (logical == "depth50") {
+            //   "orderbook.5"   -> doesnt exist
+            if (logical.empty() || logical == "depth5") {
                 return "orderbook.50";
             }
             // fallback: treat whatever is given as a prefix and let it own it
@@ -186,12 +173,8 @@ namespace md {
             std::string l = logical;
             boost::algorithm::to_lower(l);
 
-            if (l.empty() || l == "depth" || l == "depth5") {
+            if (l.empty() || l == "depth5") {
                 return "/spotMarket/level2Depth5:" + symbol_upper_with_dash;
-            }
-
-            if (l == "depth50") {
-                return "/spotMarket/level2Depth50:" + symbol_upper_with_dash;
             }
 
             // if caller directly provides a KuCoin topic, just return it

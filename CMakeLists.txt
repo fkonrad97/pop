@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 # Use Boost CONFIG packages (CMP0167).
 if(POLICY CMP0167)
-  cmake_policy(SET CMP0167 NEW)
+    cmake_policy(SET CMP0167 NEW)
 endif()
 
 project(pop LANGUAGES CXX)
@@ -25,14 +25,24 @@ find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
 # -----------------------------------------------------------------------------
-# 2) Header-only deps via FetchContent
+# 2) Header-only / external deps via FetchContent
 # -----------------------------------------------------------------------------
 include(FetchContent)
+
+# nlohmann_json
 FetchContent_Declare(
         nlohmann_json
         URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
 )
 FetchContent_MakeAvailable(nlohmann_json)
+
+# simdjson
+FetchContent_Declare(
+        simdjson
+        GIT_REPOSITORY https://github.com/simdjson/simdjson.git
+        GIT_TAG v3.10.1       # or a specific tag you like
+)
+FetchContent_MakeAvailable(simdjson)
 
 # -----------------------------------------------------------------------------
 # 3) Core library
@@ -43,8 +53,8 @@ add_library(pop_core STATIC
         src/feed_handlers/bybit_feed_handler.cpp
         src/feed_handlers/bitget_feed_handler.cpp
         src/feed_handlers/kucoin_feed_handler.cpp
-        src/rest_client.cpp
-        src/ws_client.cpp
+        src/client_connection_handlers/rest_client.cpp
+        src/client_connection_handlers/ws_client.cpp
 )
 
 # public headers live in include/
@@ -53,8 +63,9 @@ target_include_directories(pop_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
 # Publish all headers during active dev; switch to explicit list when stable.
 file(GLOB_RECURSE POP_PUBLIC_HEADERS
         CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/include/abstract/*.hpp"
+        "${CMAKE_SOURCE_DIR}/include/stream_parser/*.hpp"
         "${CMAKE_SOURCE_DIR}/include/*.hpp"
-        "${CMAKE_SOURCE_DIR}/include/*.h"
 )
 target_sources(pop_core
         PUBLIC
@@ -71,6 +82,7 @@ target_compile_features(pop_core PUBLIC ${_std_feature})
 target_link_libraries(pop_core
         PUBLIC
         nlohmann_json::nlohmann_json
+        simdjson::simdjson
         Boost::headers
         PRIVATE
         Boost::system

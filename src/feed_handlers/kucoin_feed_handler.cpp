@@ -1,11 +1,13 @@
 #include "ws_client.hpp"
 #include "rest_client.hpp"
-#include "feed_handler.hpp"
+#include "abstract/feed_handler.hpp"
 #include "venue_util.hpp"
 
 #include <nlohmann/json.hpp>
 #include <atomic>
 #include <iostream>
+
+#include "stream_parser/kucoin_stream_parser.hpp"
 
 using json = nlohmann::json;
 
@@ -15,7 +17,8 @@ namespace md {
         explicit KucoinFeedHandler(boost::asio::io_context &ioc)
             : ioc_(ioc),
               ws_(std::make_shared<WsClient>(ioc)),
-              rest_(std::make_shared<RestClient>(ioc)) {
+              rest_(std::make_shared<RestClient>(ioc)),
+              parser_(std::make_unique<KucoinStreamParser>()) {
         }
 
         Status init(const FeedHandlerConfig &cfg) override {
@@ -23,10 +26,23 @@ namespace md {
             cfg_ = cfg;
 
             ws_->set_on_message([this](const std::string &msg) {
-                json jsonObj;
-                std::stringstream(msg) >> jsonObj;
-                std::cout << msg << "\n\n";
-                // TODO: route to orderbook instead of printing
+                // Use fast KucoinStreamParser (simdjson) instead of nlohmann here
+                auto maybe_book = parser_->parse_depth5(msg);
+                if (!maybe_book) {
+                    // DEBUG: show the raw message when parsing fails
+                    std::cout << "[KUCOIN][PARSE_FAIL] msg = " << msg << "\n";
+                    return;
+                }
+
+                Depth5Book book = std::move(*maybe_book);
+                book.receive_ts = std::chrono::system_clock::now();
+
+                // For now: debug print; later: push to central brain / orderbook
+                std::cout << "[KUCOIN][BOOK] "
+                        << book.symbol << " "
+                        << "best_bid=" << book.best_bid()
+                        << " best_ask=" << book.best_ask()
+                        << "\n";
             });
 
             ws_->set_on_close([this]() {
@@ -128,6 +144,7 @@ namespace md {
         boost::asio::io_context &ioc_;
         std::shared_ptr<WsClient> ws_;
         std::shared_ptr<RestClient> rest_;
+        std::unique_ptr<IStreamParser> parser_;
 
         FeedHandlerConfig cfg_{};
         std::atomic<bool> running_{false};
