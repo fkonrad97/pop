@@ -1,343 +1,128 @@
+#include "cmdline.hpp"              // CmdOptions, parse_cmdline, parse_stream_kind, parse_venue
+#include "abstract/feed_handler.hpp"// FeedHandlerConfig, Status, StreamKind, VenueId
+#include "venue_util.hpp"           // md::venue::createFeedHandler, md::to_string(VenueId)
+
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/signal_set.hpp>
-#include <algorithm>
 #include <iostream>
-#include <memory>
-#include <nlohmann/json.hpp>
-#include <boost/asio.hpp>
-#include <deque>
-#include <sstream>
-
-#include "../include/abstract/feed_handler.hpp"
-#include "rest_client.hpp"
-#include "venue_util.hpp"
-#include "ws_client.hpp"
-#include "order_book.hpp"
-
-using json = nlohmann::json;
-
-// ---------------------------
-// Cmdline parsing helpers
-// ---------------------------
-
-struct CmdOptions {
-    std::string venue   = "BINANCE";   // default
-    std::string symbol  = "BTCUSDT";   // default
-    std::string target  = "depth5";     // logical stream descriptor
-    std::string host;                  // optional override
-    std::string port;                  // optional override
-    bool show_help = false;
-};
-
-static void print_usage(const char* prog) {
-    std::cout <<
-        "Usage: " << prog << " [options]\n\n"
-        "Options:\n"
-        "  -v, --venue  <name>    Venue name (BINANCE, OKX). Default: BINANCE\n"
-        "  -s, --symbol <sym>     Symbol, e.g. BTCUSDT. Default: BTCUSDT\n"
-        "  -t, --target <stream>  Logical stream/target. Examples:\n"
-        "                         - depth          (default)\n"
-        "                         - depth5@100ms  (Binance: depth 5 @ 100ms)\n"
-        "                         - depth-tbt     (OKX: books-l2-tbt)\n"
-        "      --host   <host>    Override WS host (optional)\n"
-        "      --port   <port>    Override WS port (optional)\n"
-        "  -h, --help             Show this help and exit\n\n"
-        "Examples:\n"
-        "  " << prog << " --venue BINANCE --symbol BTCUSDT --target depth5@100ms\n"
-        "  " << prog << " --venue OKX --symbol btcusdt --target depth\n";
-}
-
-static bool parse_cmdline(int argc, char** argv, CmdOptions& opt) {
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-
-        auto need_value = [&](const char* name) -> char* {
-            if (i + 1 >= argc) {
-                std::cerr << "Missing value for " << name << "\n";
-                return nullptr;
-            }
-            return argv[++i];
-        };
-
-        if (arg == "-h" || arg == "--help") {
-            opt.show_help = true;
-            return true;
-        } else if (arg == "-v" || arg == "--venue") {
-            if (auto* v = need_value(arg.c_str())) opt.venue = v;
-            else return false;
-        } else if (arg == "-s" || arg == "--symbol") {
-            if (auto* v = need_value(arg.c_str())) opt.symbol = v;
-            else return false;
-        } else if (arg == "-t" || arg == "--target") {
-            if (auto* v = need_value(arg.c_str())) opt.target = v;
-            else return false;
-        } else if (arg == "--host") {
-            if (auto* v = need_value(arg.c_str())) opt.host = v;
-            else return false;
-        } else if (arg == "--port") {
-            if (auto* v = need_value(arg.c_str())) opt.port = v;
-            else return false;
-        } else {
-            std::cerr << "Unknown argument: " << arg << "\n";
-            return false;
-        }
-    }
-    return true;
-}
-
-void test_ws_client(boost::asio::io_context &, const std::shared_ptr<md::WsClient> &);
-
-void test_rest_client(boost::asio::io_context &, const std::shared_ptr<md::WsClient> &,
-                      const std::shared_ptr<md::RestClient> &);
-
-int test_binance_feed_handler(boost::asio::io_context &);
-
-void test_order_book_basic();
 
 int main(int argc, char** argv) {
     CmdOptions options;
     if (!parse_cmdline(argc, argv, options)) {
-        print_usage(argv[0]);
+        // parse_cmdline already printed error/help on failure
         return 1;
     }
 
     if (options.show_help) {
-        print_usage(argv[0]);
         return 0;
     }
 
-    // Build FeedHandlerConfig from CLI
-    md::FeedHandlerConfig cfg;
-    cfg.venue_name = options.venue;
-    cfg.symbol     = options.symbol;
-    cfg.host_name  = options.host;   // may be empty → venue defaults
-    cfg.port       = options.port;   // may be empty → venue defaults
-    cfg.target     = options.target; // logical stream, mapped per venue
+    // ---------------------------------------------------------------------
+    // 1) Validate venue
+    // ---------------------------------------------------------------------
+    md::VenueId venue = parse_venue(options.venue);
+    if (venue == md::VenueId::UNKNOWN) {
+        std::cerr << "Error: unknown venue '" << options.venue
+                  << "'. Expected one of: binance, okx, bybit, bitget, kucoin.\n";
+        return 1;
+    }
 
+    // ---------------------------------------------------------------------
+    // 2) Validate stream kind / channel
+    // ---------------------------------------------------------------------
+    md::StreamKind kind = parse_stream_kind(options.channel);
+    if (kind == md::StreamKind::UNKNOWN) {
+        std::cerr << "Error: unknown stream type '" << options.channel
+                  << "'. Expected one of: incremental, depth.\n";
+        return 1;
+    }
+
+    // ---------------------------------------------------------------------
+    // 3) Validate market kind
+    // ---------------------------------------------------------------------
+    md::MarketKind market_kind = parse_market_kind(options.market);
+    if (market_kind == md::MarketKind::UNKNOWN) {
+        std::cerr << "Error: unknown market '" << options.market
+                  << "'. Expected: spot, futures.\n";
+        return 1;
+    }
+
+    // ---------------------------------------------------------------------
+    // 4) Validate access kind
+    // ---------------------------------------------------------------------
+    md::AccessKind access_kind = parse_access_kind(options.scope);
+    if (access_kind == md::AccessKind::UNKNOWN) {
+        std::cerr << "Error: unknown scope '" << options.scope
+                  << "'. Expected: public, private.\n";
+        return 1;
+    }
+
+    // ---------------------------------------------------------------------
+    // 5) Derive effective depthLevel
+    // ---------------------------------------------------------------------
+    int depth_level = 0;
+
+    if (kind == md::StreamKind::DEPTH) {
+        // For depth streams, depthLevel must be provided and > 0
+        if (!options.depthLevel.has_value()) {
+            std::cerr << "Error: --depthLevel is required when channel=depth\n";
+            return 1;
+        }
+
+        depth_level = *options.depthLevel;
+        if (depth_level <= 0) {
+            std::cerr << "Error: --depthLevel must be > 0 (got "
+                      << depth_level << ")\n";
+            return 1;
+        }
+    } else {
+        // For incremental streams depth level is not used; keep 0
+        depth_level = 0;
+    }
+
+    // ---------------------------------------------------------------------
+    // 4) Build FeedHandlerConfig from CLI options
+    // ---------------------------------------------------------------------
+    md::FeedHandlerConfig cfg;
+    cfg.venue_name  = venue;                        // enum VenueId
+    cfg.symbol      = md::venue::map_ws_symbol(venue, options.base, options.quote);               // e.g. "BTC-USDT"
+    cfg.host_name   = options.host.value_or("");    // "" → venue default host
+    cfg.port        = options.port.value_or("");    // "" → venue default port
+    cfg.stream_kind = kind;
+    cfg.depthLevel  = depth_level;
+    cfg.market_kind  = market_kind;
+    cfg.access_kind  = access_kind;
+
+    // Optional debug log
+    std::cout << "[POP] Starting feed\n"
+              << "  venue      = " << md::to_string(cfg.venue_name) << "\n"
+              << "  symbol     = " << cfg.symbol << "\n"
+              << "  channel    = " << options.channel
+              << " (StreamKind=" << md::to_string(cfg.stream_kind) << ")\n"
+              << "  depthLevel = " << cfg.depthLevel << "\n"
+              << "  host       = " << (cfg.host_name.empty() ? "<default>" : cfg.host_name) << "\n"
+              << "  port       = " << (cfg.port.empty() ? "<default>" : cfg.port) << "\n";
+
+    // ---------------------------------------------------------------------
+    // 5) Event loop + feed handler
+    // ---------------------------------------------------------------------
     boost::asio::io_context ioc;
 
-    // Use your utility factory
     auto fh = md::venue::createFeedHandler(ioc, cfg);
     if (!fh) {
-        std::cerr << "Failed to create/init feed handler for venue '"
-                  << cfg.venue_name << "'\n";
+        std::cerr << "Failed to create feed handler for venue="
+                  << md::to_string(cfg.venue_name) << "\n";
+        return 1;
+    }
+
+    if (fh->init(cfg) != md::Status::OK) {
+        std::cerr << "init() failed\n";
         return 1;
     }
 
     if (fh->start() != md::Status::OK) {
-        std::cerr << "Failed to start feed handler\n";
+        std::cerr << "start() failed\n";
         return 1;
     }
-
-    // Run until Ctrl+C or connection close
-    std::cout << "Starting event loop for "
-              << cfg.venue_name << " " << cfg.symbol
-              << " [" << cfg.target << "]\n";
-    ioc.run();
-
-    return 0;
-}
-
-void test_ws_client(boost::asio::io_context &ioc, const std::shared_ptr<md::WsClient> &ws) {
-    /**
-     * WS client usage example:
-     */
-    // 2) Attach callbacks
-    ws->set_on_message([](const std::string &msg) {
-        // Print the first ~300 chars to keep logs readable
-        std::cout << "[WS] " << (msg.size() > 300 ? msg.substr(0, 300) + "..." : msg) << "\n";
-    });
-    ws->set_on_close([] {
-        std::cout << "[WS] closed\n";
-    });
-
-    // 3) Binance WS endpoint
-    //    host:   stream.binance.com
-    //    port:   9443
-    //    target: /ws/<symbol>@depth OR @depth@100ms, etc.
-    std::string symbol = "BTCUSDT";
-    std::transform(symbol.begin(), symbol.end(), symbol.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-
-    const std::string host = "stream.binance.com";
-    const std::string port = "9443";
-    const std::string target = "/ws/" + symbol + "@depth5";
-
-    // 4) Start the async connect chain
-    ws->connect(host, port, target);
-
-    // 5) Handle Ctrl+C for graceful shutdown
-    boost::asio::signal_set signals(ioc, SIGINT, SIGTERM);
-    signals.async_wait([ws](const boost::system::error_code &, int) {
-        std::cout << "\n[signal] shutting down...\n";
-        ws->close();
-    });
-
-    // 6) Run event loop
-    std::cout << "[main] running io_context...\n";
-    ioc.run();
-    std::cout << "[main] io_context stopped.\n";
-}
-
-// This one simulates with event based updates (calling @depth withouth giving level)
-void test_rest_client(boost::asio::io_context &ioc,
-                      const std::shared_ptr<md::WsClient> &ws,
-                      const std::shared_ptr<md::RestClient> &rest_init) {
-    using json = nlohmann::json;
-
-    const std::string symbol = "BTCUSDT";
-    const std::string rest_host = "api.binance.com";
-    const std::string rest_port = "443";
-    const std::string rest_target = "/api/v3/depth?symbol=" + symbol + "&limit=1000";
-
-    std::deque<json> ws_buffer;
-    uint64_t lastUpdateId = 0;
-    bool snapshot_ready = false;
-    bool rest_busy = false;
-    std::chrono::steady_clock::time_point last_resync_time;
-
-    //-------------------------------------------------------
-    // Declare resync function first
-    //-------------------------------------------------------
-    std::function<void()> resync;
-
-    //-------------------------------------------------------
-    // WebSocket handler (declared first to allow resync calls)
-    //-------------------------------------------------------
-    ws->set_on_message([&](const std::string &m) {
-        try {
-            json msg;
-            std::stringstream(m) >> msg;
-            if (!msg.contains("U") || !msg.contains("u")) return;
-
-            ws_buffer.push_back(msg);
-
-            if (snapshot_ready) {
-                while (!ws_buffer.empty()) {
-                    auto msg2 = ws_buffer.front();
-                    ws_buffer.pop_front();
-
-                    uint64_t U2 = msg2["U"].get<uint64_t>();
-                    uint64_t u2 = msg2["u"].get<uint64_t>();
-
-                    if (U2 <= lastUpdateId + 1 && u2 >= lastUpdateId) {
-                        lastUpdateId = u2;
-                        std::cout << "[WS] Applied update, last=" << lastUpdateId << "\n";
-                    } else if (U2 > lastUpdateId + 1) {
-                        std::cerr << "[WS] GAP detected! U=" << U2
-                                << " last=" << lastUpdateId << " → resyncing...\n";
-                        if (resync) resync();
-                        return;
-                    }
-                }
-            }
-        } catch (const std::exception &e) {
-            std::cerr << "[WS] JSON error: " << e.what() << "\n";
-        }
-    });
-
-    ws->set_on_close([] { std::cout << "[WS] closed\n"; });
-
-    //-------------------------------------------------------
-    // Define the resync() function after WS handler
-    //-------------------------------------------------------
-    resync = [&]() {
-        auto now = std::chrono::steady_clock::now();
-
-        if (rest_busy) {
-            std::cout << "[RESYNC] skipped (busy)\n";
-            return;
-        }
-        if (now - last_resync_time < std::chrono::seconds(2)) {
-            std::cout << "[RESYNC] skipped (debounce)\n";
-            return;
-        }
-
-        rest_busy = true;
-        last_resync_time = now;
-        snapshot_ready = false;
-
-        std::cout << "[RESYNC] Fetching new snapshot...\n";
-
-        // create a fresh RestClient every time to avoid SSL reuse errors
-        auto rest = std::make_shared<md::RestClient>(ioc);
-        rest->async_get(rest_host, rest_target, rest_port,
-                        [&](const boost::system::error_code &ec, const std::string &body) {
-                            rest_busy = false;
-
-                            if (ec) {
-                                std::cerr << "[REST] error: " << ec.message() << "\n";
-                                return;
-                            }
-
-                            json snap;
-                            std::stringstream(body) >> snap;
-                            lastUpdateId = snap["lastUpdateId"].get<uint64_t>();
-                            snapshot_ready = true;
-
-                            std::cout << "[REST] Snapshot loaded. lastUpdateId=" << lastUpdateId << "\n";
-                            if (snap.contains("bids") && snap.contains("asks"))
-                                std::cout << "[REST] Top bid: " << snap["bids"][0]
-                                        << " | Top ask: " << snap["asks"][0] << "\n";
-
-                            // Remove outdated WS messages
-                            while (!ws_buffer.empty()) {
-                                auto &msg = ws_buffer.front();
-                                uint64_t u = msg["u"].get<uint64_t>();
-                                if (u <= lastUpdateId)
-                                    ws_buffer.pop_front();
-                                else
-                                    break;
-                            }
-
-                            // Apply first valid WS message
-                            while (!ws_buffer.empty()) {
-                                auto msg = ws_buffer.front();
-                                ws_buffer.pop_front();
-
-                                uint64_t U = msg["U"].get<uint64_t>();
-                                uint64_t u = msg["u"].get<uint64_t>();
-
-                                if (U <= lastUpdateId + 1 && u >= lastUpdateId) {
-                                    lastUpdateId = u;
-                                    std::cout << "[SYNC] First update applied. lastUpdateId=" << lastUpdateId << "\n";
-                                }
-                            }
-
-                            std::cout << "[SYNC] Snapshot + WS now aligned\n";
-                        });
-    };
-
-    //-------------------------------------------------------
-    // Connect WS first
-    //-------------------------------------------------------
-    std::string lower = symbol;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    ws->connect("stream.binance.com", "9443", "/ws/" + lower + "@depth@100ms");
-
-    //-------------------------------------------------------
-    // Initial resync call
-    //-------------------------------------------------------
-    resync();
-
-    //-------------------------------------------------------
-    // Run I/O context loop
-    //-------------------------------------------------------
-    ioc.run();
-}
-
-int test_binance_feed_handler(boost::asio::io_context &ioc) {
-    md::FeedHandlerConfig cfg;
-    cfg.venue__name = "BINANCE";
-    cfg.symbol = "btcusdt";
-    cfg.host_name = "stream.binance.com";
-    cfg.port = "9443";
-    cfg.target = "depth@100ms";
-
-    auto fh = md::venue::createFeedHandler(ioc, cfg);
-    if (!fh) return 1;
-
-    if (fh->start() != md::Status::OK) return 1;
 
     ioc.run();
     return 0;

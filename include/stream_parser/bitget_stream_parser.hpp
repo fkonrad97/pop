@@ -6,40 +6,16 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
-#include <string_view>
-#include <cstdlib>      // std::strtod
+#include <cstdlib>      // std::strtod, std::strtoll
 #include <algorithm>    // std::min
 #include <chrono>
 
 namespace md {
 
-    /**
-     * @class OkxStreamParser
-     *
-     * @brief Parser for OKX books5 JSON into unified Depth5Book.
-     *
-     * Typical OKX books5 message:
-     *
-     * {
-     *   "arg": {
-     *     "channel": "books5",
-     *     "instId": "BTC-USDT"
-     *   },
-     *   "action": "snapshot", // or "update"
-     *   "data": [
-     *     {
-     *       "asks": [["88514.9","0.1","0","1"], ...],
-     *       "bids": [["88514.8","0.2","0","2"], ...],
-     *       "ts": "1763925000000",
-     *       "checksum": 123456789
-     *     }
-     *   ]
-     * }
-     */
-    class OkxStreamParser final : public IStreamParser {
+    class BitgetStreamParser final : public IStreamParser {
     public:
-        OkxStreamParser()  = default;
-        ~OkxStreamParser() override = default;
+        BitgetStreamParser()  = default;
+        ~BitgetStreamParser() override = default;
 
         std::optional<Depth5Book>
         parse_depth5(const std::string &raw_json) override {
@@ -50,7 +26,7 @@ namespace md {
                 return std::nullopt;
             }
 
-            // --- arg/channel ---
+            // --- arg / channel ---
             if (!j.contains("arg") || !j["arg"].is_object()) {
                 return std::nullopt;
             }
@@ -60,26 +36,27 @@ namespace md {
                 return std::nullopt;
             }
             const std::string channel = arg["channel"].get<std::string>();
+
+            // We only handle books5 here (top 5 levels)
             if (channel != "books5") {
-                // Not the depth5 channel
                 return std::nullopt;
             }
 
-            // data: array with a single book object
+            // data: array, first element is the book snapshot
             if (!j.contains("data") || !j["data"].is_array() || j["data"].empty()) {
                 return std::nullopt;
             }
             const json &d0 = j["data"][0];
 
             Depth5Book book;
-            book.venue = VenueId::OKX;
+            book.venue = VenueId::BITGET;
 
-            // --- symbol from instId ---
+            // --- symbol from instId (e.g. "BTCUSDT") ---
             if (arg.contains("instId") && arg["instId"].is_string()) {
-                book.symbol = arg["instId"].get<std::string>();  // e.g. "BTC-USDT"
+                book.symbol = arg["instId"].get<std::string>();
             }
 
-            // --- timestamp (ts, string ms) ---
+            // --- exchange timestamp from d0.ts (string ms) ---
             if (d0.contains("ts") && d0["ts"].is_string()) {
                 const std::string ts_str = d0["ts"].get<std::string>();
                 char *end = nullptr;
@@ -91,14 +68,14 @@ namespace md {
                 }
             }
 
-            // --- checksum → use as exchange_seq (optional) ---
-            if (d0.contains("checksum") && d0["checksum"].is_number_integer()) {
-                book.exchange_seq = d0["checksum"].get<std::uint64_t>();
+            // --- seq → use as exchange_seq (monotonic) ---
+            if (d0.contains("seq") && d0["seq"].is_number_integer()) {
+                book.exchange_seq = d0["seq"].get<std::uint64_t>();
             } else {
                 book.exchange_seq = 0;
             }
 
-            // --- asks: first 2 fields of each level ["px","sz",...] ---
+            // --- asks: [["price","size"], ...] ---
             if (d0.contains("asks") && d0["asks"].is_array()) {
                 const auto &asks = d0["asks"];
                 const std::size_t depth =
@@ -121,7 +98,7 @@ namespace md {
                 }
             }
 
-            // --- bids: first 2 fields of each level ["px","sz",...] ---
+            // --- bids: [["price","size"], ...] ---
             if (d0.contains("bids") && d0["bids"].is_array()) {
                 const auto &bids = d0["bids"];
                 const std::size_t depth =

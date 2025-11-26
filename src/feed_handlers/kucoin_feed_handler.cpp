@@ -50,12 +50,7 @@ namespace md {
                 // TODO: health/state hooks if needed
             });
 
-            constexpr auto venue_id = md::venue::VenueId::KUCOIN;
-            topic_ = md::venue::make_depth_target(
-                venue_id,
-                cfg_.symbol, // e.g. "btc-usdt"
-                cfg_.target // e.g. "depth" or "depth5"
-            );
+            topic_ = venue::resolve_stream_channel(*this, cfg_);
 
             return Status::OK;
         }
@@ -63,11 +58,13 @@ namespace md {
         Status start() override {
             if (running_.exchange(true)) return Status::ERROR;
 
+            venue::Endpoint restEndPoint = venue::default_rest_endpoint(cfg_.venue_name, cfg_.market_kind, cfg_.access_kind);
+
             // 1) Call KuCoin bullet-public via REST to get token + endpoint
             rest_->async_post(
-                "api.kucoin.com",
-                "/api/v1/bullet-public",
-                "443",
+            restEndPoint.host,
+                restEndPoint.path,
+                restEndPoint.port,
                 "{}", // empty JSON body
                 [this](boost::system::error_code ec, const std::string &body) {
                     if (ec) {
@@ -120,6 +117,22 @@ namespace md {
 
         bool is_running() const override { return running_.load(); }
 
+        std::string incrementalChannelResolver() override { return "level2"; }
+
+        /**
+         * https://www.kucoin.com/docs-new/3470068w0
+         */
+        std::string depthChannelResolver() override {
+            std::string levelChannel = [this]() -> std::string {
+                switch (cfg_.depthLevel) {
+                    case 5:  return "level2Depth5";
+                    default: throw std::invalid_argument("Invalid depth level");
+                }
+            }();
+
+            return "/spotMarket/" + levelChannel + ":" + cfg_.symbol;
+        }
+
     private:
         void do_connect_ws_() {
             std::cout << "[KUCOIN] Connecting to wss://" << ws_host_ << ":" << ws_port_ << ws_target_ << "\n";
@@ -129,7 +142,7 @@ namespace md {
                 auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count();
                 json sub_msg = {
-                    {"id", static_cast<std::int64_t>(ms)},
+                    {"id", ms},
                     {"type", "subscribe"},
                     {"topic", topic_},
                     {"response", true}

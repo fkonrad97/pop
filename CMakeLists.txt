@@ -20,7 +20,8 @@ option(POP_BUILD_TESTS "Build unit tests" ON)
 # -----------------------------------------------------------------------------
 # 1) System packages
 # -----------------------------------------------------------------------------
-find_package(Boost 1.78 CONFIG REQUIRED COMPONENTS headers system)
+# NOTE: added 'program_options' here
+find_package(Boost 1.78 CONFIG REQUIRED COMPONENTS headers system program_options)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -40,7 +41,7 @@ FetchContent_MakeAvailable(nlohmann_json)
 FetchContent_Declare(
         simdjson
         GIT_REPOSITORY https://github.com/simdjson/simdjson.git
-        GIT_TAG v3.10.1       # or a specific tag you like
+        GIT_TAG v3.10.1
 )
 FetchContent_MakeAvailable(simdjson)
 
@@ -104,5 +105,12 @@ endif()
 add_executable(pop
         app/main.cpp
 )
-target_link_libraries(pop PRIVATE pop_core)
+
+# Link the app against core + Boost::program_options
+target_link_libraries(pop
+        PRIVATE
+        pop_core
+        Boost::program_options
+)
+
 target_compile_features(pop PRIVATE ${_std_feature})

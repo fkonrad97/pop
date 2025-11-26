@@ -15,28 +15,21 @@
 using json = nlohmann::json;
 
 namespace md {
-
     class OkxFeedHandler final : public IVenueFeedHandler {
     public:
         explicit OkxFeedHandler(boost::asio::io_context &ioc)
             : ioc_(ioc),
-        ws_(std::make_shared<WsClient>(ioc)),
-    parser_(std::make_unique<OkxStreamParser>()) {}
+              ws_(std::make_shared<WsClient>(ioc)),
+              parser_(std::make_unique<OkxStreamParser>()) {
+        }
 
         Status init(const FeedHandlerConfig &cfg) override {
             if (running_.load()) return Status::ERROR;
             cfg_ = cfg;
 
-            // Decide how we map symbol/target for OKX
-            const auto venue_id = md::venue::to_venue_id(cfg_.venue_name);
-
             // For OKX, make_depth_target(...) returns CHANNEL name, not path:
             // "books5", "books-l2-tbt", etc.
-            okx_channel_ = md::venue::make_depth_target(
-                venue_id,
-                cfg_.symbol,   // not used in OKX branch but fine
-                cfg_.target
-            );
+            okx_channel_ = venue::resolve_stream_channel(*this, cfg_);
 
             ws_->set_on_message([this](const std::string &msg) {
                 auto maybe_book = parser_->parse_depth5(msg);
@@ -78,11 +71,9 @@ namespace md {
             // Public WS endpoint is fixed for OKX
             const std::string path = "/ws/v5/public";
 
-            const auto venue_id = venue::to_venue_id(cfg_.venue_name);
-
             std::cout << "[OKX] Connecting to wss://" << host << ":" << port << path << "\n";
 
-            ws_->set_on_open([this, venue_id]() {
+            ws_->set_on_open([this]() {
                 // Build subscribe message using channel decided in init()
                 json sub_msg = {
                     {"op", "subscribe"},
@@ -90,7 +81,7 @@ namespace md {
                         "args", json::array({
                             {
                                 {"channel", okx_channel_},
-                                {"instId", venue::map_ws_symbol(venue_id, cfg_.symbol)}
+                                {"instId", cfg_.symbol}
                             }
                         })
                     }
@@ -110,6 +101,16 @@ namespace md {
 
         bool is_running() const override { return running_.load(); }
 
+        std::string incrementalChannelResolver() override { return "books";}
+        std::string depthChannelResolver() override {
+            switch (cfg_.depthLevel) {
+                case 5: {
+                    return "books5";
+                }
+                default: throw std::invalid_argument("Invalid depth level");
+            }
+        }
+
     private:
         boost::asio::io_context &ioc_;
         std::shared_ptr<WsClient> ws_;
@@ -123,5 +124,4 @@ namespace md {
     std::unique_ptr<IVenueFeedHandler> make_okx_feed_handler(boost::asio::io_context &ioc) {
         return std::make_unique<OkxFeedHandler>(ioc);
     }
-
 } // namespace md

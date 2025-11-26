@@ -50,7 +50,7 @@ namespace md {
             const json &data = j["data"];
 
             Depth5Book book;
-            book.venue = venue::VenueId::KUCOIN;
+            book.venue = VenueId::KUCOIN;
 
             // --- symbol from topic: "/spotMarket/level2Depth5:BTC-USDT"
             {

@@ -30,7 +30,7 @@ namespace md {
         static constexpr std::size_t kDepth = Depth;
 
         // --- Identity ---
-        venue::VenueId venue   {};          ///< BINANCE, OKX, ...
+        VenueId venue   {};          ///< BINANCE, OKX, ...
         std::string symbol         {};          ///< Normalized symbol, e.g. "BTCUSDT"
 
         // --- Sequencing ---

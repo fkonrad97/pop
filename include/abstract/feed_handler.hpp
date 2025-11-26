@@ -4,7 +4,6 @@
 #include <string>
 
 namespace md {
-
     /**
      * @brief Return code for feed operations.
      *
@@ -14,7 +13,63 @@ namespace md {
      *
      * Note: For async chains, detailed errors should be reported via logs/callbacks, not just this enum.
      */
-    enum class Status { OK, ERROR, HEALTHY, DEGRADED, DISCONNECTED, RESYNCED, SYNCHING, CLOSED };
+    enum class Status {
+        OK,
+        ERROR,
+        HEALTHY,
+        DEGRADED,
+        DISCONNECTED,
+        RESYNCED,
+        SYNCHING,
+        CLOSED
+    };
+
+    enum class VenueId { BINANCE, OKX, BYBIT, BITGET, KUCOIN, UNKNOWN };
+
+    inline const char *to_string(VenueId k) {
+        switch (k) {
+            case VenueId::BINANCE: return "binance";
+            case VenueId::OKX: return "okx";
+            case VenueId::BYBIT: return "bybit";
+            case VenueId::BITGET: return "bitget";
+            case VenueId::KUCOIN: return "kucoin";
+            default: return "UNKNOWN";
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 1) Logical stream kind
+    // -------------------------------------------------------------------------
+    /**
+     * @brief High-level logical stream / channel kind.
+     *
+     * The idea:
+     *  - You select what *type* of data you want (DEPTH vs DEPTH5 vs TRADES, etc.)
+     *  - Each venue maps this to its own WS path / channel name.
+     */
+    enum class StreamKind {
+        INCREMENTAL, ///< Full orderbook depth (venue-specific limit, e.g. 100/200)
+        DEPTH, ///< Top 5 levels per side
+        UNKNOWN
+    };
+
+    enum class MarketKind {
+        SPOT,
+        UNKNOWN
+    };
+
+    enum class AccessKind {
+        PUBLIC,
+        UNKNOWN
+    };
+
+    inline const char *to_string(StreamKind k) {
+        switch (k) {
+            case StreamKind::INCREMENTAL: return "INCREMENTAL";
+            case StreamKind::DEPTH: return "DEPTH";
+            default: return "UNKNOWN";
+        }
+    }
 
     /**
      * @brief Minimal configuration for a venue feed.
@@ -25,26 +80,26 @@ namespace md {
      *  - timeouts, heartbeat, backoff policy
      */
     struct FeedHandlerConfig {
-        std::string venue_name;  ///< e.g. "BINANCE", "OKX"
-        std::string symbol;      ///< Logical symbol, e.g. "BTCUSDT"
-        std::string host_name;   ///< Optional override. If empty, venue default is used.
-        std::string port;        ///< Optional override. If empty, venue default is used.
+        VenueId     venue_name;     ///< e.g. VenueId::BINANCE
 
-        /**
-         * @brief Logical stream / channel descriptor.
-         *
-         * Examples:
-         *   - "depth"           → venue-specific default depth stream
-         *   - "depth5@100ms"    → Binance: depth 5 @ 100ms
-         *   - "trades"          → trade stream
-         *
-         * Each venue is responsible for mapping this logical string to:
-         *   - actual WS URL path (e.g. "/ws/btcusdt@depth5@100ms")
-         *   - or WS channel name + fixed URL (OKX: "/ws/v5/public" + {"channel": "..."}).
-         */
-        std::string target;
+        std::string symbol;    ///< Symbol normalized to venue requirements
+
+        std::string host_name;      ///< optional override, "" = default
+        std::string port;           ///< optional override, "" = default
+
+        StreamKind  stream_kind;    ///< depth vs incremental
+        int         depthLevel{0};  ///< only meaningful for depth
+
+        MarketKind  market_kind{MarketKind::SPOT};     ///< spot vs futures
+        AccessKind  access_kind{AccessKind::PUBLIC};   ///< public vs private
     };
 
+    struct IChannelResolver {
+        virtual ~IChannelResolver() = default;
+
+        virtual std::string incrementalChannelResolver() = 0;
+        virtual std::string depthChannelResolver() = 0;
+    };
 
     /**
      * @brief Abstract interface for a venue-specific feed handler.
@@ -59,11 +114,11 @@ namespace md {
      *   - start() may be called once; repeated calls should return ERROR or no-op safely.
      *   - stop() is idempotent; it must not throw; it should cause on-close/health updates as appropriate.
      */
-    struct IVenueFeedHandler {
+    struct IVenueFeedHandler : IChannelResolver {
         virtual ~IVenueFeedHandler() = default;
 
         /// Prepare resources and validate configuration. Should NOT block on network.
-        virtual Status init(const FeedHandlerConfig&) = 0;
+        virtual Status init(const FeedHandlerConfig &) = 0;
 
         /// Enqueue the async network chain on the (externally-driven) io_context.
         virtual Status start() = 0;
@@ -74,4 +129,7 @@ namespace md {
         virtual bool is_running() const = 0;
     };
 
+    template<typename T>
+    concept VenueFeedHandler =
+            std::is_base_of_v<IVenueFeedHandler, T>;
 } // namespace md

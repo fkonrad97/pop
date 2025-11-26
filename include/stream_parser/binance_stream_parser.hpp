@@ -65,7 +65,7 @@ namespace md {
             }
 
             Depth5Book book;
-            book.venue = venue::VenueId::BINANCE;
+            book.venue = VenueId::BINANCE;
 
             // Symbol is not in the message → use ctor-injected symbol if present
             if (!symbol_.empty()) {
