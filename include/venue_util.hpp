@@ -1,17 +1,13 @@
 #pragma once
 
-#include "feed_handler.hpp"             // IVenueFeedHandler, Status, FeedHandlerConfig
+#include "abstract/feed_handler.hpp"
 #include <boost/asio/io_context.hpp>
 
 #include <memory>
 #include <string>
-#include <iostream>
-#include <algorithm>    // std::transform / ranges
 #include <boost/algorithm/string.hpp>
-#include <cctype>       // std::tolower, std::toupper
 
 namespace md {
-    // These are defined in your venue-specific headers (binance_feed_handler.hpp, okx_feed_handler.hpp)
     std::unique_ptr<IVenueFeedHandler> make_binance_feed_handler(boost::asio::io_context &ioc);
 
     std::unique_ptr<IVenueFeedHandler> make_okx_feed_handler(boost::asio::io_context &ioc);
@@ -23,21 +19,6 @@ namespace md {
     std::unique_ptr<IVenueFeedHandler> make_kucoin_feed_handler(boost::asio::io_context &ioc);
 
     namespace venue {
-        enum class VenueId { BINANCE, OKX, BYBIT, BITGET, KUCOIN, UNKNOWN };
-
-        inline VenueId to_venue_id(const std::string &name) {
-            std::string v = name;
-            boost::algorithm::to_lower(v);
-
-            if (v == "binance") return VenueId::BINANCE;
-            if (v == "okx")     return VenueId::OKX;
-            if (v == "bybit")   return VenueId::BYBIT;
-            if (v == "bitget")  return VenueId::BITGET;
-            if (v == "kucoin")  return VenueId::KUCOIN;
-            return VenueId::UNKNOWN;
-        }
-
-
         /**
          * @brief Create and initialize a venue-specific feed handler based on cfg.venue_name.
          *        Returns nullptr if the venue is unknown or init() fails.
@@ -49,198 +30,87 @@ namespace md {
          */
         inline std::unique_ptr<IVenueFeedHandler> createFeedHandler(boost::asio::io_context &ioc,
                                                                     const FeedHandlerConfig &cfg) {
-            std::string v = cfg.venue_name;
-            boost::algorithm::to_lower(v);
             std::unique_ptr<IVenueFeedHandler> handler;
 
-            if (v == "binance") handler = make_binance_feed_handler(ioc);
-            if (v == "okx")     handler = make_okx_feed_handler(ioc);
-            if (v == "bybit")   handler = make_bybit_feed_handler(ioc);
-            if (v == "bitget")  handler = make_bitget_feed_handler(ioc);
-            if (v == "kucoin")  handler = make_kucoin_feed_handler(ioc);
-
-            if (!handler) {
-                return nullptr; // unknown venue
-            }
-
-            if (handler->init(cfg) != Status::OK) {
-                return nullptr; // invalid config or precondition failed
+            switch (cfg.venue_name) {
+                case VenueId::BINANCE: handler = make_binance_feed_handler(ioc);
+                    break;
+                case VenueId::OKX: handler = make_okx_feed_handler(ioc);
+                    break;
+                case VenueId::BYBIT: handler = make_bybit_feed_handler(ioc);
+                    break;
+                case VenueId::BITGET: handler = make_bitget_feed_handler(ioc);
+                    break;
+                case VenueId::KUCOIN: handler = make_kucoin_feed_handler(ioc);
+                    break;
+                default: handler = nullptr;
             }
 
             return handler;
         }
 
         // --- 2) Symbol mapping ---
+        inline std::string map_ws_symbol(VenueId venue,
+                                         const std::string &base,
+                                         const std::string &quote) {
+            // Normalize to UPPER once
+            const std::string base_up = boost::algorithm::to_upper_copy(base);
+            const std::string quote_up = boost::algorithm::to_upper_copy(quote);
 
-        /// Normalize a generic symbol - The pattern should be :: $symbol1-$symbol2 (e.g.: BTC-USDT)
-        inline std::string map_ws_symbol(VenueId v, const std::string &sym) {
-            std::vector<std::string> strs;
-            boost::split(strs, sym, boost::is_any_of("-"));
-            std::string concatSymbol = strs.at(0) + strs.at(1);
+            const std::string concat = base_up + quote_up; // "BTCUSDT"
+            const std::string dashed = base_up + "-" + quote_up; // "BTC-USDT"
 
-            switch (v) {
+            switch (venue) {
                 case VenueId::BINANCE:
-                    return boost::algorithm::to_lower_copy(concatSymbol);
+                    // Binance WS paths expect lowercase "btcusdt"
+                    return boost::algorithm::to_lower_copy(concat);
+
                 case VenueId::OKX:
-                    return boost::algorithm::to_upper_copy(sym);
+                    // OKX uses "BTC-USDT"
+                    return dashed;
+
                 case VenueId::BYBIT:
-                    return boost::algorithm::to_upper_copy(concatSymbol);
+                    // Bybit uses "BTCUSDT" in topics
+                    return concat;
+
                 case VenueId::BITGET:
-                    return boost::algorithm::to_upper_copy(concatSymbol);
+                    // Bitget also uses "BTCUSDT"
+                    return concat;
+
                 case VenueId::KUCOIN:
-                    // KuCoin topics use "BTC-USDT"
-                    return boost::algorithm::to_upper_copy(sym);
+                    // KuCoin uses "BTC-USDT" in topics
+                    return dashed;
+
                 default:
-                    throw std::invalid_argument("Invalid Venue_ID/Symbol");
+                    throw std::invalid_argument("map_ws_symbol: unknown VenueId");
             }
         }
 
-        /// --- 3) Logical depth target → venue-specific mapping ---
+        // type must derive from IVenueFeedHandler
+        template<typename T>
+        concept VenueFeedHandler = std::derived_from<T, IVenueFeedHandler>;
 
         /**
-         * @brief Map a logical depth spec (e.g. "depth", "depth5@100ms")
-         *        to a Binance WS suffix, WITHOUT symbol or "/ws/".
+         * @brief Generic stream-channel resolver.
          *
-         * Input examples:
-         *   ""              -> "@depth"          (default)
-         *   "depth"         -> "@depth"
-         *   "depth5"        -> "@depth5"
-         *   "depth5@100ms"  -> "@depth5@100ms"
-         */
-        inline std::string logical_to_binance_depth_suffix(const std::string &logical) {
-            if (logical.empty() || logical == "depth") {
-                return "@depth"; // Binance default depth stream
-            }
-            if (!logical.empty() && logical.front() == '@') {
-                return logical; // already a suffix
-            }
-            return "@" + logical;
-        }
-
-        /**
-         * @brief Map a logical depth spec to an OKX channel name.
+         * Dispatches based on cfg.stream_kind and calls the appropriate
+         * venue-specific resolver on the handler.
          *
-         * Input examples:
-         *   "" / "depth"          -> "books5"
-         *   "depth-tbt"           -> "books-l2-tbt"
-         *   "books" / "books5" / "books-l2-tbt" -> used as-is.
+         * Requirements:
+         *   - T must inherit from IVenueFeedHandler (thus from IChannelResolver).
+         *   - T must implement:
+         *       std::string incrementalChannelResolver();
+         *       std::string depthChannelResolver();
          */
-        inline std::string logical_to_okx_depth_channel(const std::string &logical) {
-            if (logical.empty() || logical == "depth") {
-                return "books5";
-            }
-            return logical;
-        }
-
-        /**
-         * @brief Map a logical depth spec to an Bitget channel name.
-         *
-         * Input examples:
-         *   "" / "depth"          -> "books1"
-         *   "depth5"              -> "books5"
-         *   ...
-         */
-        inline std::string logical_to_bitget_depth_channel(const std::string &logical) {
-            std::string l = logical;
-            boost::algorithm::to_lower(l);
-
-            // Default: use 5 levels depth
-            if (l.empty() || l == "depth" || l == "depth5") {
-                return "books5";
-            }
-            if (l == "books")   return "books";
-            if (l == "books1")  return "books1";
-            if (l == "books5")  return "books5";
-            if (l == "books15") return "books15";
-
-            // Fallback: let caller pass a raw channel name
-            return logical;
-        }
-
-        inline std::string logical_to_bybit_orderbook_prefix(const std::string &logical) {
-            // Our "logical" config:
-            //   "" / "depth"    -> orderbook.1
-            //   "depth5"        -> does not exist in bybit
-            //   "depth50"       -> orderbook.50
-            //   "orderbook.5"   -> used as-is prefix (we'll append .SYMBOL outside)
-            if (logical.empty() || logical == "depth") {
-                return "orderbook.1";
-            }
-            if (logical.rfind("orderbook.", 0) == 0) {
-                return logical; // already an orderbook.* prefix
-            }
-            if (logical == "depth5") {
-                return "orderbook.5";
-            }
-            if (logical == "depth50") {
-                return "orderbook.50";
-            }
-            // fallback: treat whatever is given as a prefix and let it own it
-            return logical;
-        }
-
-        inline std::string logical_to_kucoin_depth_topic(const std::string &logical,
-                                                 const std::string &symbol_upper_with_dash) {
-            // Default: 5-level spot orderbook
-            // "" / "depth" / "depth5" → "/spotMarket/level2Depth5:BTC-USDT"
-            std::string l = logical;
-            boost::algorithm::to_lower(l);
-
-            if (l.empty() || l == "depth" || l == "depth5") {
-                return "/spotMarket/level2Depth5:" + symbol_upper_with_dash;
-            }
-
-            if (l == "depth50") {
-                return "/spotMarket/level2Depth50:" + symbol_upper_with_dash;
-            }
-
-            // if caller directly provides a KuCoin topic, just return it
-            if (!l.empty() && l[0] == '/') {
-                return logical;
-            }
-
-            // Fallback: treat logical as a suffix under /spotMarket/
-            return "/spotMarket/" + logical + ":" + symbol_upper_with_dash;
-        }
-
-
-        // --- 4) High-level helper for WS target / channel construction ---
-
-        /**
-         * @brief Build a venue-specific WS "target" for depth streams.
-         *
-         * For BINANCE: returns full WS path (e.g. "/ws/btcusdt@depth5@100ms").
-         * For OKX:     returns CHANNEL name only (e.g. "books5"), because OKX path is fixed.
-         */
-        inline std::string make_depth_target(VenueId v,
-                                             const std::string &symbol,
-                                             const std::string &logical_target) {
-            switch (v) {
-                case VenueId::BINANCE: {
-                    std::string ws_sym = map_ws_symbol(v, symbol);
-                    std::string suffix = logical_to_binance_depth_suffix(logical_target);
-                    return "/ws/" + ws_sym + suffix;
-                }
-                case VenueId::OKX: {
-                    return logical_to_okx_depth_channel(logical_target);
-                }
-                case VenueId::BYBIT: {
-                    // Here we return the *full channel string* "orderbook.5.BTCUSDT"
-                    std::string sym = map_ws_symbol(v, symbol); // "BTCUSDT"
-                    std::string prefix = logical_to_bybit_orderbook_prefix(logical_target);
-                    return prefix + "." + sym;
-                }
-                case VenueId::BITGET: {
-                    // Return channel *only* ("books5", "books15", ...)
-                    return logical_to_bitget_depth_channel(logical_target);
-                }
-                case VenueId::KUCOIN: {
-                    // Build full topic string, e.g. "/spotMarket/level2Depth5:BTC-USDT"
-                    std::string kucoin_sym = map_ws_symbol(VenueId::KUCOIN, symbol);
-                    return logical_to_kucoin_depth_topic(logical_target, kucoin_sym);
-                }
+        template<VenueFeedHandler T>
+        std::string resolve_stream_channel(T &handler, const FeedHandlerConfig &cfg) {
+            switch (cfg.stream_kind) {
+                case StreamKind::INCREMENTAL:
+                    return handler.incrementalChannelResolver();
+                case StreamKind::DEPTH:
+                    return handler.depthChannelResolver();
                 default:
-                    return logical_target;
+                    throw std::invalid_argument("resolve_stream_channel: StreamKind::UNKNOWN not allowed");
             }
         }
     } // namespace venue

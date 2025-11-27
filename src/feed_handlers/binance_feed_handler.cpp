@@ -2,89 +2,27 @@
 
 #include "ws_client.hpp"
 #include "rest_client.hpp"
-#include "feed_handler.hpp"
+#include "abstract/feed_handler.hpp"
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <atomic>
 
 #include "venue_util.hpp"
+#include "abstract/stream_parser.hpp"
+#include "stream_parser/binance_stream_parser.hpp"
 
 using json = nlohmann::json;
 
 namespace md {
-    /**
-    * WS: @depth
-    {
-       "e": "depthUpdate", // Event type
-        "E": 123456789,     // Event time
-        "T": 123456788,     // Transaction time
-        "s": "BTCUSDT",     // Symbol
-        "U": 157,           // First update ID in event
-        "u": 160,           // Final update ID in event
-        "pu": 149,          // Final update Id in last stream(ie `u` in last stream)
-        "b": [              // Bids to be updated
-            [
-            "0.0024",       // Price level to be updated
-            "10"            // Quantity
-            ]
-        ],
-        "a": [              // Asks to be updated
-            [
-            "0.0026",       // Price level to be updated
-            "100"          // Quantity
-            ]
-        ]
-    }
-    */
 
-    /**
-     * WS: depth@<level>
-    {
-        "e": "depthUpdate", // Event type
-        "E": 1571889248277, // Event time
-        "T": 1571889248276, // Transaction time
-        "s": "BTCUSDT",
-        "U": 390497796,     // First update ID in event
-        "u": 390497878,     // Final update ID in event
-        "pu": 390497794,    // Final update Id in last stream(ie `u` in last stream)
-        "b": [              // Bids to be updated
-        [
-            "7403.89",      // Price Level to be updated
-            "0.002"         // Quantity
-        ],
-        [
-            "7403.90",
-            "3.906"
-        ],
-            ...
-        ],
-        "a": [              // Asks to be updated
-        [
-            "7405.96",      // Price level to be
-            "3.340"         // Quantity
-        ],
-        [
-            "7406.63",
-            "4.525"
-        ],
-            ...
-        ]
-    }
-    */
-
-    /** Example: @depth5
-        {"lastUpdateId":79544937539,"bids":[["110209.81000000","5.55324000"], ...],"asks":[["110209.82000000","2.45228000"], ...]}
-     */
-
-    /** Example: @depth
-        {"e":"depthUpdate","E":1762107420814,"s":"BTCUSDT","U":79544963298,"u":79544963298,"b":[["110050.00000000","0.02040000"]],"a":[]}
-     */
     class BinanceFeedHandler final : public IVenueFeedHandler {
     public:
         explicit BinanceFeedHandler(boost::asio::io_context &ioc)
-            : ioc_(ioc), ws_(std::make_shared<WsClient>(ioc)) {
+        : ioc_(ioc), ws_(std::make_shared<WsClient>(ioc)),
+          parser_(std::make_unique<BinanceStreamParser>()) {
         }
 
+        /// 1. IVenueFeedHandler overrides ::
         Status init(const FeedHandlerConfig &cfg) override {
             if (running_.load()) return Status::ERROR;
 
@@ -92,12 +30,22 @@ namespace md {
 
             // Bind WS callbacks
             ws_->set_on_message([this](const std::string &msg) {
-                json jsonObj;
-                std::stringstream(msg) >> jsonObj;
-                std::cout << msg << "\n";
-                // auto h = std::hash<json>{}(jsonObj["asks"]);
-                // std::cout << h << "\n";
-                std::cout << "\n";
+                auto maybe_book = parser_->parse_depth5(msg);
+                if (!maybe_book) {
+                    // DEBUG: show the raw message when parsing fails
+                    std::cout << "[BINANCE][PARSE_FAIL] msg = " << msg << "\n";
+                    return;
+                }
+
+                Depth5Book book = std::move(*maybe_book);
+                book.receive_ts = std::chrono::system_clock::now();
+
+                // For now: debug print; later: push to central brain / orderbook
+                std::cout << "[BINANCE][BOOK] "
+                        << book.symbol << " "
+                        << "best_bid=" << book.best_bid()
+                        << " best_ask=" << book.best_ask()
+                        << "\n";
             });
 
             ws_->set_on_close([this]() {
@@ -110,23 +58,14 @@ namespace md {
         Status start() override {
             if (running_.exchange(true)) return Status::ERROR; // already running
 
-            const std::string host = cfg_.host_name.empty()
+            const std::string host = cfg_.ws_host.empty()
                                          ? "stream.binance.com"
-                                         : cfg_.host_name;
-            const std::string port = cfg_.port.empty()
+                                         : cfg_.ws_host;
+            const std::string port = cfg_.ws_port.empty()
                                          ? "443"
-                                         : cfg_.port;
+                                         : cfg_.ws_port;
 
-            const auto venue_id = venue::to_venue_id(cfg_.venue_name);
-
-            // For BINANCE: make_depth_target → "/ws/btcusdt@depth5@100ms"
-            const std::string target = md::venue::make_depth_target(
-                venue_id,
-                cfg_.symbol, // e.g. "btcusdt"
-                cfg_.target // e.g. "depth5@100ms" or "depth"
-            );
-
-            std::cout<<"String target :: " << std::endl<<target<<std::endl;
+            const std::string target = venue::resolve_stream_channel(*this, cfg_);
 
             std::cout << "[BINANCE] Connecting to wss://"
                     << host << ":" << port << "/" << target << "\n";
@@ -143,11 +82,35 @@ namespace md {
 
         bool is_running() const override { return running_.load(); }
 
+        /// 2. IChannelResolver overrides ::
+        std::string incrementalChannelResolver() override {
+            return "@depth";
+        }
+
+        /**
+         * @brief Map a logical depth spec (e.g. "depth", "depth5@100ms")
+         *        to a Binance WS suffix, WITHOUT symbol or "/ws/".
+         *
+         * Input example:
+         *   5        -> "@depth5@100ms"
+         */
+        std::string depthChannelResolver() override {
+            std::string prefix = "/ws/" + cfg_.symbol;
+
+            switch (cfg_.depthLevel) {
+                case 5: {
+                    return prefix + "@depth5";
+                }
+                default: throw std::invalid_argument("Invalid depth level");
+            }
+        }
+
     private:
         using Clock = std::chrono::steady_clock;
 
         boost::asio::io_context &ioc_;
         std::shared_ptr<WsClient> ws_;
+        std::unique_ptr<IStreamParser> parser_;
         FeedHandlerConfig cfg_{};
         std::atomic<bool> running_{false};
         Clock::time_point last_msg_ts_{};

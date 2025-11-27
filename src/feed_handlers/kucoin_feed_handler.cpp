@@ -1,11 +1,13 @@
 #include "ws_client.hpp"
 #include "rest_client.hpp"
-#include "feed_handler.hpp"
+#include "abstract/feed_handler.hpp"
 #include "venue_util.hpp"
 
 #include <nlohmann/json.hpp>
 #include <atomic>
 #include <iostream>
+
+#include "stream_parser/kucoin_stream_parser.hpp"
 
 using json = nlohmann::json;
 
@@ -15,7 +17,8 @@ namespace md {
         explicit KucoinFeedHandler(boost::asio::io_context &ioc)
             : ioc_(ioc),
               ws_(std::make_shared<WsClient>(ioc)),
-              rest_(std::make_shared<RestClient>(ioc)) {
+              rest_(std::make_shared<RestClient>(ioc)),
+              parser_(std::make_unique<KucoinStreamParser>()) {
         }
 
         Status init(const FeedHandlerConfig &cfg) override {
@@ -23,10 +26,23 @@ namespace md {
             cfg_ = cfg;
 
             ws_->set_on_message([this](const std::string &msg) {
-                json jsonObj;
-                std::stringstream(msg) >> jsonObj;
-                std::cout << msg << "\n\n";
-                // TODO: route to orderbook instead of printing
+                // Use KucoinStreamParser (simdjson)
+                auto maybe_book = parser_->parse_depth5(msg);
+                if (!maybe_book) {
+                    // DEBUG: show the raw message when parsing fails
+                    std::cout << "[KUCOIN][PARSE_FAIL] msg = " << msg << "\n";
+                    return;
+                }
+
+                Depth5Book book = std::move(*maybe_book);
+                book.receive_ts = std::chrono::system_clock::now();
+
+                // For now: debug print; later: push to central brain / orderbook
+                std::cout << "[KUCOIN][BOOK] "
+                        << book.symbol << " "
+                        << "best_bid=" << book.best_bid()
+                        << " best_ask=" << book.best_ask()
+                        << "\n";
             });
 
             ws_->set_on_close([this]() {
@@ -34,12 +50,7 @@ namespace md {
                 // TODO: health/state hooks if needed
             });
 
-            constexpr auto venue_id = md::venue::VenueId::KUCOIN;
-            topic_ = md::venue::make_depth_target(
-                venue_id,
-                cfg_.symbol, // e.g. "btc-usdt"
-                cfg_.target // e.g. "depth" or "depth5"
-            );
+            topic_ = venue::resolve_stream_channel(*this, cfg_);
 
             return Status::OK;
         }
@@ -49,9 +60,9 @@ namespace md {
 
             // 1) Call KuCoin bullet-public via REST to get token + endpoint
             rest_->async_post(
-                "api.kucoin.com",
-                "/api/v1/bullet-public",
-                "443",
+                cfg_.rest_host.empty() ? "api.kucoin.com" : cfg_.rest_host,
+                cfg_.rest_port.empty() ? "443" : cfg_.rest_port,
+                cfg_.rest_path.empty() ? "/api/v1/bullet-public" : cfg_.rest_path,
                 "{}", // empty JSON body
                 [this](boost::system::error_code ec, const std::string &body) {
                     if (ec) {
@@ -104,6 +115,22 @@ namespace md {
 
         bool is_running() const override { return running_.load(); }
 
+        std::string incrementalChannelResolver() override { return "level2"; }
+
+        /**
+         * https://www.kucoin.com/docs-new/3470068w0
+         */
+        std::string depthChannelResolver() override {
+            std::string levelChannel = [this]() -> std::string {
+                switch (cfg_.depthLevel) {
+                    case 5:  return "level2Depth5";
+                    default: throw std::invalid_argument("Invalid depth level");
+                }
+            }();
+
+            return "/spotMarket/" + levelChannel + ":" + cfg_.symbol;
+        }
+
     private:
         void do_connect_ws_() {
             std::cout << "[KUCOIN] Connecting to wss://" << ws_host_ << ":" << ws_port_ << ws_target_ << "\n";
@@ -113,7 +140,7 @@ namespace md {
                 auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count();
                 json sub_msg = {
-                    {"id", static_cast<std::int64_t>(ms)},
+                    {"id", ms},
                     {"type", "subscribe"},
                     {"topic", topic_},
                     {"response", true}
@@ -128,6 +155,7 @@ namespace md {
         boost::asio::io_context &ioc_;
         std::shared_ptr<WsClient> ws_;
         std::shared_ptr<RestClient> rest_;
+        std::unique_ptr<IStreamParser> parser_;
 
         FeedHandlerConfig cfg_{};
         std::atomic<bool> running_{false};
