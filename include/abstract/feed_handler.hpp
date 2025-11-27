@@ -53,16 +53,6 @@ namespace md {
         UNKNOWN
     };
 
-    enum class MarketKind {
-        SPOT,
-        UNKNOWN
-    };
-
-    enum class AccessKind {
-        PUBLIC,
-        UNKNOWN
-    };
-
     inline const char *to_string(StreamKind k) {
         switch (k) {
             case StreamKind::INCREMENTAL: return "INCREMENTAL";
@@ -84,14 +74,18 @@ namespace md {
 
         std::string symbol;    ///< Symbol normalized to venue requirements
 
-        std::string host_name;      ///< optional override, "" = default
-        std::string port;           ///< optional override, "" = default
+        std::string ws_host;            ///< optional override, "" = default
+        std::string ws_port;           ///< optional override, "" = default
+        std::string ws_path;            ///< optional override, "" = default
+
+        std::string rest_host;            ///< optional override, "" = default
+        std::string rest_port;           ///< optional override, "" = default
+        std::string rest_path;            ///< optional override, "" = default
 
         StreamKind  stream_kind;    ///< depth vs incremental
         int         depthLevel{0};  ///< only meaningful for depth
 
-        MarketKind  market_kind{MarketKind::SPOT};     ///< spot vs futures
-        AccessKind  access_kind{AccessKind::PUBLIC};   ///< public vs private
+
     };
 
     struct IChannelResolver {

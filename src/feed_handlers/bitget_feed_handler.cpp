@@ -61,16 +61,16 @@ namespace md {
         Status start() override {
             if (running_.exchange(true)) return Status::ERROR;
 
-            const std::string host = cfg_.host_name.empty()
+            const std::string host = cfg_.ws_host.empty()
                                          ? "ws.bitget.com"
-                                         : cfg_.host_name;
-            const std::string port = cfg_.port.empty()
+                                         : cfg_.ws_host;
+            const std::string port = cfg_.ws_port.empty()
                                          ? "443"
-                                         : cfg_.port;
-
-            // For now: spot public WS (can be parameterized later)
-            const std::string path = "/v2/ws/public";
-
+                                         : cfg_.ws_port;
+            const std::string path = cfg_.ws_path.empty()
+                                         ? "/v2/ws/public"
+                                         : cfg_.ws_path;
+                                         
             std::cout << "[BITGET] Connecting to wss://" << host << ":" << port << path << "\n";
             std::cout << "[BITGET] Subscribing to channel: " << bitget_channel_ << "\n";
 

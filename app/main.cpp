@@ -37,27 +37,7 @@ int main(int argc, char** argv) {
     }
 
     // ---------------------------------------------------------------------
-    // 3) Validate market kind
-    // ---------------------------------------------------------------------
-    md::MarketKind market_kind = parse_market_kind(options.market);
-    if (market_kind == md::MarketKind::UNKNOWN) {
-        std::cerr << "Error: unknown market '" << options.market
-                  << "'. Expected: spot, futures.\n";
-        return 1;
-    }
-
-    // ---------------------------------------------------------------------
-    // 4) Validate access kind
-    // ---------------------------------------------------------------------
-    md::AccessKind access_kind = parse_access_kind(options.scope);
-    if (access_kind == md::AccessKind::UNKNOWN) {
-        std::cerr << "Error: unknown scope '" << options.scope
-                  << "'. Expected: public, private.\n";
-        return 1;
-    }
-
-    // ---------------------------------------------------------------------
-    // 5) Derive effective depthLevel
+    // 3) Derive effective depthLevel
     // ---------------------------------------------------------------------
     int depth_level = 0;
 
@@ -85,12 +65,14 @@ int main(int argc, char** argv) {
     md::FeedHandlerConfig cfg;
     cfg.venue_name  = venue;                        // enum VenueId
     cfg.symbol      = md::venue::map_ws_symbol(venue, options.base, options.quote);               // e.g. "BTC-USDT"
-    cfg.host_name   = options.host.value_or("");    // "" → venue default host
-    cfg.port        = options.port.value_or("");    // "" → venue default port
     cfg.stream_kind = kind;
     cfg.depthLevel  = depth_level;
-    cfg.market_kind  = market_kind;
-    cfg.access_kind  = access_kind;
+    cfg.ws_host     = options.ws_host.value_or("");    
+    cfg.ws_port     = options.ws_port.value_or("");    
+    cfg.ws_path     = options.ws_path.value_or("");    
+    cfg.rest_host   = options.rest_host.value_or("");    
+    cfg.rest_port   = options.rest_port.value_or("");    
+    cfg.rest_path   = options.rest_path.value_or("");    
 
     // Optional debug log
     std::cout << "[POP] Starting feed\n"
@@ -99,8 +81,12 @@ int main(int argc, char** argv) {
               << "  channel    = " << options.channel
               << " (StreamKind=" << md::to_string(cfg.stream_kind) << ")\n"
               << "  depthLevel = " << cfg.depthLevel << "\n"
-              << "  host       = " << (cfg.host_name.empty() ? "<default>" : cfg.host_name) << "\n"
-              << "  port       = " << (cfg.port.empty() ? "<default>" : cfg.port) << "\n";
+              << "  ws_host       = " << (cfg.ws_host.empty() ? "<default>" : cfg.ws_host) << "\n"
+              << "  ws_port       = " << (cfg.ws_port.empty() ? "<default>" : cfg.ws_port) << "\n"
+              << "  ws_path       = " << (cfg.ws_path.empty() ? "<default>" : cfg.ws_path) << "\n"
+              << "  rest_host       = " << (cfg.rest_host.empty() ? "<default>" : cfg.rest_host) << "\n"
+              << "  rest_port       = " << (cfg.rest_port.empty() ? "<default>" : cfg.rest_port) << "\n"
+              << "  rest_path       = " << (cfg.rest_path.empty() ? "<default>" : cfg.rest_path) << "\n";
 
     // ---------------------------------------------------------------------
     // 5) Event loop + feed handler

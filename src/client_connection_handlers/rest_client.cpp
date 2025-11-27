@@ -38,8 +38,8 @@ namespace md {
     }
 
     void RestClient::async_post(std::string host,
-                                std::string target,
                                 std::string port,
+                                std::string target,
                                 std::string body,
                                 ResponseHandler cb) {
         host_ = std::move(host);

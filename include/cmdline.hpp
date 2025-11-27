@@ -13,10 +13,12 @@ struct CmdOptions {
     std::string quote; // --quote USDT
     std::string channel; // required-ish, with default "depth"
     std::optional<int> depthLevel; // only meaningful for depth channels
-    std::string market; // "spot" | "futures"
-    std::string scope; // "public" | "private"
-    std::optional<std::string> host; // override or std::nullopt
-    std::optional<std::string> port; // override or std::nullopt
+    std::optional<std::string> ws_host; // override or std::nullopt
+    std::optional<std::string> ws_port; // override or std::nullopt
+    std::optional<std::string> ws_path; // override or std::nullopt
+    std::optional<std::string> rest_host; // override or std::nullopt
+    std::optional<std::string> rest_port; // override or std::nullopt
+    std::optional<std::string> rest_path; // override or std::nullopt
 
     bool show_help{false};
 };
@@ -52,20 +54,6 @@ inline md::VenueId parse_venue(const std::string &v_raw) {
     return md::VenueId::UNKNOWN;
 }
 
-inline md::MarketKind parse_market_kind(const std::string &raw) {
-    std::string s = raw;
-    std::ranges::transform(s, s.begin(), ::tolower);
-    if (s == "spot") return md::MarketKind::SPOT;
-    return md::MarketKind::UNKNOWN;
-}
-
-inline md::AccessKind parse_access_kind(const std::string &raw) {
-    std::string s = raw;
-    std::ranges::transform(s, s.begin(), ::tolower);
-    if (s == "public") return md::AccessKind::PUBLIC;
-    return md::AccessKind::UNKNOWN;
-}
-
 inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
     namespace po = boost::program_options;
 
@@ -78,18 +66,22 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
              "Base asset, e.g. BTC")
             ("quote", po::value<std::string>()->required(),
              "Quote asset, e.g. USDT")
-            ("channel,t", po::value<std::string>()->default_value("depth"),
+            ("channel,c", po::value<std::string>()->default_value("depth"),
              "Stream type: incremental, depth")
-            ("depthLevel", po::value<int>(),
+            ("depthLevel,dl", po::value<int>(),
              "Orderbook depth; required/used if channel is depth")
-            ("market,m", po::value<std::string>()->default_value("spot"),
-             "Market: spot, futures")
-            ("scope", po::value<std::string>()->default_value("public"),
-             "Scope: public, private")
-            ("host", po::value<std::string>(),
-             "Optional host override")
-            ("port", po::value<std::string>(),
-             "Optional port override");
+            ("ws_host", po::value<std::string>(),
+             "Optional WebSocket host override")
+            ("ws_port", po::value<std::string>(),
+             "Optional WebSocket port override")
+            ("ws_path", po::value<std::string>(),
+             "Optional WebSocket path override")
+            ("rest_host", po::value<std::string>(),
+             "Optional REST host override")
+            ("rest_port", po::value<std::string>(),
+             "Optional REST port override")
+            ("rest_path", po::value<std::string>(),
+             "Optional REST path override");
 
     po::variables_map vm;
     try {
@@ -99,9 +91,7 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
             std::cout << "Usage: " << argv[0]
                     << " --venue VENUE --base BTC --quote USDT "
                     "[--channel incremental|depth] "
-                    "[--market spot|futures] "
-                    "[--scope public|private] "
-                    "[--depthLevel N] [--host HOST] [--port PORT]\n\n";
+                    "[--depthLevel N] [--host HOST] [--port PORT] [--path PATH]\n\n";
             std::cout << desc << "\n";
             out.show_help = true;
             return true;
@@ -119,12 +109,13 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
     out.base = vm["base"].as<std::string>();
     out.quote = vm["quote"].as<std::string>();
     out.channel = vm["channel"].as<std::string>();
-    out.market = vm["market"].as<std::string>();
-    out.scope = vm["scope"].as<std::string>();
-
-    if (vm.contains("host")) out.host = vm["host"].as<std::string>();
-    if (vm.contains("port")) out.port = vm["port"].as<std::string>();
     if (vm.contains("depthLevel")) out.depthLevel = vm["depthLevel"].as<int>();
+    if (vm.contains("ws_host")) out.ws_host = vm["ws_host"].as<std::string>();
+    if (vm.contains("ws_port")) out.ws_port = vm["ws_port"].as<std::string>();
+    if (vm.contains("ws_path")) out.ws_path = vm["ws_path"].as<std::string>();
+    if (vm.contains("rest_host")) out.rest_host = vm["rest_host"].as<std::string>();
+    if (vm.contains("rest_port")) out.rest_port = vm["rest_port"].as<std::string>();
+    if (vm.contains("rest_path")) out.rest_path = vm["rest_path"].as<std::string>();
 
     return true;
 }

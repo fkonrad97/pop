@@ -58,13 +58,11 @@ namespace md {
         Status start() override {
             if (running_.exchange(true)) return Status::ERROR;
 
-            venue::Endpoint restEndPoint = venue::default_rest_endpoint(cfg_.venue_name, cfg_.market_kind, cfg_.access_kind);
-
             // 1) Call KuCoin bullet-public via REST to get token + endpoint
             rest_->async_post(
-            restEndPoint.host,
-                restEndPoint.path,
-                restEndPoint.port,
+                cfg_.rest_host.empty() ? "api.kucoin.com" : cfg_.rest_host,
+                cfg_.rest_port.empty() ? "443" : cfg_.rest_port,
+                cfg_.rest_path.empty() ? "/api/v1/bullet-public" : cfg_.rest_path,
                 "{}", // empty JSON body
                 [this](boost::system::error_code ec, const std::string &body) {
                     if (ec) {

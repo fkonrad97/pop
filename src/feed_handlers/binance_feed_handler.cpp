@@ -58,12 +58,12 @@ namespace md {
         Status start() override {
             if (running_.exchange(true)) return Status::ERROR; // already running
 
-            const std::string host = cfg_.host_name.empty()
+            const std::string host = cfg_.ws_host.empty()
                                          ? "stream.binance.com"
-                                         : cfg_.host_name;
-            const std::string port = cfg_.port.empty()
+                                         : cfg_.ws_host;
+            const std::string port = cfg_.ws_port.empty()
                                          ? "443"
-                                         : cfg_.port;
+                                         : cfg_.ws_port;
 
             const std::string target = venue::resolve_stream_channel(*this, cfg_);
 

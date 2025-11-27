@@ -61,15 +61,15 @@ namespace md {
         Status start() override {
             if (running_.exchange(true)) return Status::ERROR;
 
-            const std::string host = cfg_.host_name.empty()
+            const std::string host = cfg_.ws_host.empty()
                                          ? "ws.okx.com"
-                                         : cfg_.host_name;
-            const std::string port = cfg_.port.empty()
+                                         : cfg_.ws_host;
+            const std::string port = cfg_.ws_port.empty()
                                          ? "443"
-                                         : cfg_.port;
-
-            // Public WS endpoint is fixed for OKX
-            const std::string path = "/ws/v5/public";
+                                         : cfg_.ws_port;
+            const std::string path = cfg_.ws_path.empty()
+                                         ? "/ws/v5/public"
+                                         : cfg_.ws_path;
 
             std::cout << "[OKX] Connecting to wss://" << host << ":" << port << path << "\n";
 
