@@ -1,4 +1,4 @@
-#include "rest_client.hpp"
+#include "../../include/client_connection_handlers/RestClient.hpp"
 
 #include <boost/asio/connect.hpp>
 #include <boost/beast/version.hpp>

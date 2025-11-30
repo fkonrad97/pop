@@ -1,13 +1,13 @@
-#include "ws_client.hpp"
-#include "rest_client.hpp"
-#include "abstract/feed_handler.hpp"
-#include "venue_util.hpp"
+#include "client_connection_handlers/WsClient.hpp"
+#include "client_connection_handlers/RestClient.hpp"
+#include "abstract/FeedHandler.hpp"
+#include "VenueUtils.hpp"
 
 #include <nlohmann/json.hpp>
 #include <atomic>
 #include <iostream>
 
-#include "stream_parser/kucoin_stream_parser.hpp"
+#include "abstract/StreamParser.hpp"
 
 using json = nlohmann::json;
 
@@ -17,9 +17,7 @@ namespace md {
         explicit KucoinFeedHandler(boost::asio::io_context &ioc)
             : ioc_(ioc),
               ws_(std::make_shared<WsClient>(ioc)),
-              rest_(std::make_shared<RestClient>(ioc)),
-              parser_(std::make_unique<KucoinStreamParser>()) {
-        }
+              rest_(std::make_shared<RestClient>(ioc)) {}
 
         Status init(const FeedHandlerConfig &cfg) override {
             if (running_.load()) return Status::ERROR;
@@ -144,7 +142,6 @@ namespace md {
         boost::asio::io_context &ioc_;
         std::shared_ptr<WsClient> ws_;
         std::shared_ptr<RestClient> rest_;
-        std::unique_ptr<IStreamParser> parser_;
 
         FeedHandlerConfig cfg_{};
         std::atomic<bool> running_{false};

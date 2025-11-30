@@ -1,34 +1,28 @@
-#pragma once
-
-#include "ws_client.hpp"
-#include "rest_client.hpp"
-#include "abstract/feed_handler.hpp"
-#include "venue_util.hpp"
+#include "client_connection_handlers/WsClient.hpp"
+#include "client_connection_handlers/RestClient.hpp"
+#include "abstract/FeedHandler.hpp"
+#include "VenueUtils.hpp"
 
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <atomic>
-#include <sstream>
-
-#include "abstract/stream_parser.hpp"
-#include "stream_parser/bybit_stream_parser.hpp"
 
 using json = nlohmann::json;
 
 namespace md {
-    class ByBitFeedHandler final : public IVenueFeedHandler {
+    class IStreamParser;
+
+    class BitgetFeedHandler final : public IVenueFeedHandler {
     public:
-        explicit ByBitFeedHandler(boost::asio::io_context &ioc)
+        explicit BitgetFeedHandler(boost::asio::io_context &ioc)
             : ioc_(ioc),
-              ws_(std::make_shared<WsClient>(ioc)),
-              parser_(std::make_unique<BybitStreamParser>()) {
-        }
+              ws_(std::make_shared<WsClient>(ioc)) {}
 
         Status init(const FeedHandlerConfig &cfg) override {
             if (running_.load()) return Status::ERROR;
             cfg_ = cfg;
 
-            bybit_channel_ = venue::resolve_stream_channel(*this, cfg_);
+            bitget_channel_ = venue::resolve_stream_channel(*this, cfg_);
 
             // Bind WS callbacks
             ws_->set_on_raw_message(
@@ -36,7 +30,7 @@ namespace md {
                 {
                     // turn bytes -> std::string for printing
                     std::string msg(data, len);
-                    std::cout << "[BYBIT RAW] " << msg << "\n";
+                    std::cout << "[BITGET RAW] " << msg << "\n";
                 });
 
             ws_->set_on_close([this]() {
@@ -51,26 +45,31 @@ namespace md {
             if (running_.exchange(true)) return Status::ERROR;
 
             const std::string host = cfg_.ws_host.empty()
-                                         ? "stream.bybit.com"
+                                         ? "ws.bitget.com"
                                          : cfg_.ws_host;
             const std::string port = cfg_.ws_port.empty()
                                          ? "443"
                                          : cfg_.ws_port;
             const std::string path = cfg_.ws_path.empty()
-                                         ? "/v5/public/spot"
+                                         ? "/v2/ws/public"
                                          : cfg_.ws_path;
-
-            std::cout << "[BYBIT] Connecting to wss://" << host << ":" << port << path << "\n";
-            std::cout << "[BYBIT] Subscribing to channel: " << bybit_channel_ << "\n";
+                                         
+            std::cout << "[BITGET] Connecting to wss://" << host << ":" << port << path << "\n";
+            std::cout << "[BITGET] Subscribing to channel: " << bitget_channel_ << "\n";
 
             ws_->set_on_open([this]() {
-                // Example JSON: {"op":"subscribe","args":["orderbook.5.BTCUSDT"]}
                 nlohmann::json sub_msg = {
                     {"op", "subscribe"},
-                    {"type", "snapshot"},
-                    {"args", nlohmann::json::array({bybit_channel_})}
+                    {
+                        "args", nlohmann::json::array({
+                            {
+                                {"instType", "SPOT"},
+                                {"channel", bitget_channel_}, // e.g. "books5"
+                                {"instId", cfg_.symbol} // "BTCUSDT"
+                            }
+                        })
+                    }
                 };
-                std::cout << sub_msg.dump() << "\n";
                 ws_->send_text(sub_msg.dump());
             });
 
@@ -86,12 +85,19 @@ namespace md {
 
         bool is_running() const override { return running_.load(); }
 
-        std::string incrementalChannelResolver() override { return "books." + cfg_.symbol; }
+        std::string incrementalChannelResolver() override { return "books"; }
 
+        /**
+         * @brief Map a logical depth spec to an Bitget channel name.
+         * https://www.bitget.com/api-doc/spot/websocket/public/Depth-Channel
+         *
+         * Input example:
+         *   "depth5"              -> "books5"
+         */
         std::string depthChannelResolver() override {
             switch (cfg_.depthLevel) {
                 case 5: {
-                    return "orderbook.50." + cfg_.symbol;
+                    return "books5";
                 }
                 default: throw std::invalid_argument("Invalid depth level");
             }
@@ -100,14 +106,13 @@ namespace md {
     private:
         boost::asio::io_context &ioc_;
         std::shared_ptr<WsClient> ws_;
-        std::unique_ptr<IStreamParser> parser_;
         FeedHandlerConfig cfg_{};
         std::atomic<bool> running_{false};
 
-        std::string bybit_channel_; // now stored as member
+        std::string bitget_channel_;
     };
 
-    std::unique_ptr<IVenueFeedHandler> make_bybit_feed_handler(boost::asio::io_context &ioc) {
-        return std::make_unique<ByBitFeedHandler>(ioc);
+    std::unique_ptr<IVenueFeedHandler> make_bitget_feed_handler(boost::asio::io_context &ioc) {
+        return std::make_unique<BitgetFeedHandler>(ioc);
     }
 } //  namespace md

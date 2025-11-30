@@ -1,15 +1,12 @@
-#pragma once
-
-#include "ws_client.hpp"
-#include "rest_client.hpp"
-#include "abstract/feed_handler.hpp"
+#include "client_connection_handlers/WsClient.hpp"
+#include "client_connection_handlers/RestClient.hpp"
+#include "abstract/FeedHandler.hpp"
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <atomic>
 
-#include "venue_util.hpp"
-#include "abstract/stream_parser.hpp"
-#include "stream_parser/binance_stream_parser.hpp"
+#include "VenueUtils.hpp"
+#include "abstract/StreamParser.hpp"
 
 using json = nlohmann::json;
 
@@ -20,10 +17,8 @@ namespace md
     {
     public:
         explicit BinanceFeedHandler(boost::asio::io_context &ioc)
-            : ioc_(ioc), ws_(std::make_shared<WsClient>(ioc)),
-              parser_(std::make_unique<BinanceStreamParser>())
-        {
-        }
+            : ioc_(ioc), ws_(std::make_shared<WsClient>(ioc))
+        {}
 
         /// 1. IVenueFeedHandler overrides ::
         Status init(const FeedHandlerConfig &cfg) override
@@ -84,7 +79,8 @@ namespace md
         /// 2. IChannelResolver overrides ::
         std::string incrementalChannelResolver() override
         {
-            return "@depth";
+            std::string prefix = "/ws/" + cfg_.symbol;
+            return prefix + "@depth";
         }
 
         /**
@@ -114,7 +110,6 @@ namespace md
 
         boost::asio::io_context &ioc_;
         std::shared_ptr<WsClient> ws_;
-        std::unique_ptr<IStreamParser> parser_;
         FeedHandlerConfig cfg_{};
         std::atomic<bool> running_{false};
         Clock::time_point last_msg_ts_{};

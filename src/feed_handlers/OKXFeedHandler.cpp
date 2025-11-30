@@ -1,16 +1,13 @@
-#pragma once
-
-#include "ws_client.hpp"
-#include "rest_client.hpp"
-#include "abstract/feed_handler.hpp"
-#include "venue_util.hpp"
+#include "client_connection_handlers/WsClient.hpp"
+#include "client_connection_handlers/RestClient.hpp"
+#include "abstract/FeedHandler.hpp"
+#include "VenueUtils.hpp"
 
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <atomic>
-#include <sstream>
 
-#include "stream_parser/okx_stream_parser.hpp"
+#include "abstract/StreamParser.hpp"
 
 using json = nlohmann::json;
 
@@ -21,8 +18,7 @@ namespace md
     public:
         explicit OkxFeedHandler(boost::asio::io_context &ioc)
             : ioc_(ioc),
-              ws_(std::make_shared<WsClient>(ioc)),
-              parser_(std::make_unique<OkxStreamParser>())
+              ws_(std::make_shared<WsClient>(ioc))
         {
         }
 
@@ -117,7 +113,6 @@ namespace md
     private:
         boost::asio::io_context &ioc_;
         std::shared_ptr<WsClient> ws_;
-        std::unique_ptr<IStreamParser> parser_;
         FeedHandlerConfig cfg_{};
         std::atomic<bool> running_{false};
 

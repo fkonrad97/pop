@@ -1,4 +1,4 @@
-#include "ws_client.hpp"
+#include "../../include/client_connection_handlers/WsClient.hpp"
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/version.hpp>

@@ -48,27 +48,83 @@ FetchContent_MakeAvailable(simdjson)
 # -----------------------------------------------------------------------------
 # 3) Core library
 # -----------------------------------------------------------------------------
+# Feed handlers
+file(GLOB CORE_FEED_HANDLERS
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/src/feed_handlers/*.cpp"
+)
+
+# Connection handlers
+file(GLOB CORE_CLIENT_HANDLERS
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/src/client_connection_handlers/*.cpp"
+)
+
+# Orderbook
+file(GLOB CORE_ORDERBOOK
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/src/orderbook/*.cpp"
+)
+
+# Parser implementations
+file(GLOB CORE_STREAM_PARSER
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/src/stream_parser/*.cpp"
+)
+
 add_library(pop_core STATIC
-        src/feed_handlers/binance_feed_handler.cpp
-        src/feed_handlers/okx_feed_handler.cpp
-        src/feed_handlers/bybit_feed_handler.cpp
-        src/feed_handlers/bitget_feed_handler.cpp
-        src/feed_handlers/kucoin_feed_handler.cpp
-        src/client_connection_handlers/rest_client.cpp
-        src/client_connection_handlers/ws_client.cpp
+        ${CORE_FEED_HANDLERS}
+        ${CORE_CLIENT_HANDLERS}
+        ${CORE_STREAM_PARSER}
 )
 
 # public headers live in include/
 target_include_directories(pop_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
+# -----------------------------------------------------------------------------
+# 3) POP PUBLIC HEADERS
 # Publish all headers during active dev; switch to explicit list when stable.
-file(GLOB_RECURSE POP_PUBLIC_HEADERS
+# -----------------------------------------------------------------------------
+# Feed handlers
+file(GLOB CORE_ABSTRACT_HEADERS
         CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/include/abstract/*.hpp"
+)
+
+# Connection handlers
+file(GLOB CORE_CLIENT_CONNECTION_HANDLER_HEADERS
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/include/client_connection_handlers/*.hpp"
+)
+
+# Orderbook
+file(GLOB CORE_ORDERBOOK_HEADERS
+        CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/include/orderbook/*.hpp"
+)
+
+# Connection handlers
+file(GLOB CORE_STREAM_PARSER_HEADERS
+        CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/include/stream_parser/*.hpp"
+)
+
+# Orderbook
+file(GLOB CORE_INCLUDE_HEADERS
+        CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/include/*.hpp"
 )
+
+# All includes
+file(GLOB_RECURSE POP_PUBLIC_HEADERS
+        CONFIGURE_DEPENDS
+        ${CORE_ABSTRACT_HEADERS}
+        ${CORE_CLIENT_CONNECTION_HANDLER_HEADERS}
+        ${CORE_ORDERBOOK_HEADERS}
+        ${CORE_STREAM_PARSER_HEADERS}
+        ${CORE_INCLUDE_HEADERS}
+)
+
 target_sources(pop_core
         PUBLIC
         FILE_SET public_headers
