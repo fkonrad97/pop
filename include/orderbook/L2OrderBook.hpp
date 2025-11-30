@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <vector>
 #include <cassert>
+#include <span>
 
 #include "OrderBookUtils.hpp"
 

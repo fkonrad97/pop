@@ -23,20 +23,13 @@ struct CmdOptions {
     bool show_help{false};
 };
 
-inline md::StreamKind parse_stream_kind(const std::string &s_raw, const int depthLevel) {
+inline md::StreamKind parse_stream_kind(const std::string &s_raw) {
     std::string s = s_raw;
     std::ranges::transform(s, s.begin(), ::tolower);
 
     if (s == "incremental") return md::StreamKind::INCREMENTAL;
-    if (s == "depth") { 
-        switch (depthLevel)
-        {
-        case 5:
-            return md::StreamKind::DEPTH5;
-        default:
-            throw std::invalid_argument("Invalid depth level for depth stream kind");
-        }
-    }
+    if (s == "depth") return md::StreamKind::DEPTH;
+    return md::StreamKind::UNKNOWN;
 }
 
 inline md::VenueId parse_venue(const std::string &v_raw) {
@@ -75,8 +68,8 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
              "Quote asset, e.g. USDT")
             ("channel,c", po::value<std::string>()->default_value("depth"),
              "Stream type: incremental, depth")
-            ("depthLevel,dl", po::value<int>(),
-             "Orderbook depth; required/used if channel is depth")
+            ("depthLevel,dl", po::value<size_t>()->default_value(5),
+             "Orderbook depth; required or defaults")
             ("ws_host", po::value<std::string>(),
              "Optional WebSocket host override")
             ("ws_port", po::value<std::string>(),
@@ -116,7 +109,7 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
     out.base = vm["base"].as<std::string>();
     out.quote = vm["quote"].as<std::string>();
     out.channel = vm["channel"].as<std::string>();
-    if (vm.contains("depthLevel")) out.depthLevel = vm["depthLevel"].as<int>();
+    out.depthLevel = vm["depthLevel"].as<size_t>();
     if (vm.contains("ws_host")) out.ws_host = vm["ws_host"].as<std::string>();
     if (vm.contains("ws_port")) out.ws_port = vm["ws_port"].as<std::string>();
     if (vm.contains("ws_path")) out.ws_path = vm["ws_path"].as<std::string>();

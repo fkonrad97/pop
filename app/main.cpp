@@ -27,19 +27,9 @@ int main(int argc, char** argv) {
     }
 
     // ---------------------------------------------------------------------
-    // 3) Derive effective depthLevel
-    // ---------------------------------------------------------------------
-    int depth_level = 5; // default
-
-    // ---------------------------------------------------------------------
     // 2) Validate stream kind / channel
     // ---------------------------------------------------------------------
-    md::StreamKind kind = parse_stream_kind(options.channel, depth_level);
-    if (kind == md::StreamKind::UNKNOWN) {
-        std::cerr << "Error: unknown stream type '" << options.channel
-                  << "'. Expected one of: incremental, depth.\n";
-        return 1;
-    }
+    md::StreamKind kind = parse_stream_kind(options.channel);
 
     // ---------------------------------------------------------------------
     // 4) Build FeedHandlerConfig from CLI options
@@ -48,7 +38,7 @@ int main(int argc, char** argv) {
     cfg.venue_name  = venue;                        // enum VenueId
     cfg.symbol      = md::venue::map_ws_symbol(venue, options.base, options.quote);               // e.g. "BTC-USDT"
     cfg.stream_kind = kind;
-    cfg.depthLevel  = depth_level;
+    cfg.depthLevel  = options.depthLevel.value();
     cfg.ws_host     = options.ws_host.value_or("");    
     cfg.ws_port     = options.ws_port.value_or("");    
     cfg.ws_path     = options.ws_path.value_or("");    

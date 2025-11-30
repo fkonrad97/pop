@@ -107,7 +107,7 @@ namespace md {
             switch (cfg.stream_kind) {
                 case StreamKind::INCREMENTAL:
                     return handler.incrementalChannelResolver();
-                case StreamKind::DEPTH5:
+                case StreamKind::DEPTH:
                     return handler.depthChannelResolver();
                 default:
                     throw std::invalid_argument("resolve_stream_channel: StreamKind::UNKNOWN not allowed");

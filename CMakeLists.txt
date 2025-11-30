@@ -75,6 +75,7 @@ file(GLOB CORE_STREAM_PARSER
 add_library(pop_core STATIC
         ${CORE_FEED_HANDLERS}
         ${CORE_CLIENT_HANDLERS}
+        ${CORE_ORDERBOOK}
         ${CORE_STREAM_PARSER}
 )
 

@@ -44,19 +44,19 @@ namespace md {
      * @brief High-level logical stream / channel kind.
      *
      * The idea:
-     *  - You select what *type* of data you want (DEPTH vs DEPTH5 vs TRADES, etc.)
+     *  - You select what *type* of data you want (DEPTH vs TRADES, etc.)
      *  - Each venue maps this to its own WS path / channel name.
      */
     enum class StreamKind {
         INCREMENTAL, ///< Full orderbook depth (venue-specific limit, e.g. 100/200)
-        DEPTH5, ///< Top 5 levels per side
+        DEPTH, ///< Top x levels per side
         UNKNOWN
     };
 
     inline const char *to_string(StreamKind k) {
         switch (k) {
             case StreamKind::INCREMENTAL: return "INCREMENTAL";
-            case StreamKind::DEPTH5: return "DEPTH5";
+            case StreamKind::DEPTH: return "DEPTH";
             default: return "UNKNOWN";
         }
     }
@@ -70,28 +70,27 @@ namespace md {
      *  - timeouts, heartbeat, backoff policy
      */
     struct FeedHandlerConfig {
-        VenueId     venue_name;     ///< e.g. VenueId::BINANCE
+        VenueId venue_name; ///< e.g. VenueId::BINANCE
 
-        std::string symbol;    ///< Symbol normalized to venue requirements
+        std::string symbol; ///< Symbol normalized to venue requirements
 
-        std::string ws_host;            ///< optional override, "" = default
-        std::string ws_port;           ///< optional override, "" = default
-        std::string ws_path;            ///< optional override, "" = default
+        std::string ws_host; ///< optional override, "" = default
+        std::string ws_port; ///< optional override, "" = default
+        std::string ws_path; ///< optional override, "" = default
 
-        std::string rest_host;            ///< optional override, "" = default
-        std::string rest_port;           ///< optional override, "" = default
-        std::string rest_path;            ///< optional override, "" = default
+        std::string rest_host; ///< optional override, "" = default
+        std::string rest_port; ///< optional override, "" = default
+        std::string rest_path; ///< optional override, "" = default
 
-        StreamKind  stream_kind;    ///< depth vs incremental
-        int         depthLevel{0};  ///< only meaningful for depth
-
-
+        StreamKind stream_kind; ///< depth vs incremental
+        size_t depthLevel{0}; ///< only meaningful for depth
     };
 
     struct IChannelResolver {
         virtual ~IChannelResolver() = default;
 
         virtual std::string incrementalChannelResolver() = 0;
+
         virtual std::string depthChannelResolver() = 0;
     };
 
@@ -109,7 +108,7 @@ namespace md {
      *   - stop() is idempotent; it must not throw; it should cause on-close/health updates as appropriate.
      */
     struct IVenueFeedHandler : IChannelResolver {
-        virtual ~IVenueFeedHandler() = default;
+        ~IVenueFeedHandler() override = default;
 
         /// Prepare resources and validate configuration. Should NOT block on network.
         virtual Status init(const FeedHandlerConfig &) = 0;
