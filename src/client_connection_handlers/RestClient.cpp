@@ -2,6 +2,7 @@
 
 #include <boost/asio/connect.hpp>
 #include <boost/beast/version.hpp>
+#include <boost/asio/ssl/error.hpp>
 #include <openssl/ssl.h>   // SSL_set_tlsext_host_name
 #include <iostream>
 
@@ -151,10 +152,19 @@ namespace md {
         auto self = shared_from_this();
         stream_.async_shutdown(
             [](const boost::system::error_code &ec) {
-                // OpenSSL often returns EOF on shutdown; it’s fine to ignore
-                if (ec && ec != boost::asio::error::eof) {
-                    // log out ec.message()
+                // OpenSSL often returns EOF/stream_truncated on shutdown; it's fine to ignore.
+                if (!ec) {
+                    return;
                 }
+
+                // Treat EOF and stream_truncated as non-errors
+                if (ec == boost::asio::error::eof ||
+                    ec == boost::asio::ssl::error::stream_truncated) {
+                    return;
+                }
+
+                std::cerr << "[RESTCLIENT] TLS shutdown error: "
+                        << ec.message() << "\n";
             }
         );
     }

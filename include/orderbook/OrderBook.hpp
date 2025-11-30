@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <cstddef>
 #include <vector>
 #include <cassert>
 #include <span>
@@ -9,9 +8,9 @@
 #include "OrderBookUtils.hpp"
 
 namespace md {
-    class L2Book {
+    class OrderBook {
     public:
-        explicit L2Book(std::size_t depth)
+        explicit OrderBook(const std::size_t depth)
             : depth_{depth},
               bids_(depth),
               asks_(depth) {

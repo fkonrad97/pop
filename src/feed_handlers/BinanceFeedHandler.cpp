@@ -4,10 +4,10 @@
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <atomic>
-
 #include "VenueUtils.hpp"
-#include "orderbook/L2BookController.hpp"
-#include "stream_parser/BinanceL2Parser.hpp"
+#include "orderbook/BinanceOrderBookController.hpp"
+#include "stream_parser/BinanceStreamParser.hpp"
+#include "orderbook/OrderBookUtils.hpp"
 
 using json = nlohmann::json;
 
@@ -15,8 +15,8 @@ namespace md {
     class BinanceFeedHandler final : public IVenueFeedHandler {
     public:
         explicit BinanceFeedHandler(boost::asio::io_context &ioc)
-        : ioc_(ioc), ws_(std::make_shared<WsClient>(ioc)),
-          rest_(std::make_shared<RestClient>(ioc)) {
+            : ioc_(ioc), ws_(std::make_shared<WsClient>(ioc)),
+              rest_(std::make_shared<RestClient>(ioc)) {
         }
 
         /// 1. IVenueFeedHandler overrides ::
@@ -28,63 +28,51 @@ namespace md {
 
             const auto depth = static_cast<std::size_t>(cfg_.depthLevel);
 
-            // Construct controller & parser *here*, when we actually know the depth
-            book_controller_ = std::make_unique<L2BookController>(depth);
-            parser_ = std::make_unique<BinanceL2Parser>(*book_controller_);
+            // Construct controller + parser here, when we know depth
+            ctrl_ = std::make_unique<BinanceOrderBookController>(depth);
+            parser_ = std::make_unique<BinanceStreamParser>();
 
-
-            // Wire WS -> parser
+            // Wire WS -> parser -> controller
             ws_->set_on_raw_message(
                 [this](const char *data, std::size_t len) {
-                    if (!parser_) return; // safety
+                    if (!parser_ || !ctrl_) return;
 
                     std::string_view msg{data, len};
 
-                    // Choose which parser entrypoint to use by stream_kind
-                    if (cfg_.stream_kind == StreamKind::DEPTH) {
-                        parser_->on_l2_snapshot(msg);
-                    } else {
-                        parser_->on_l2_incremental(msg);
+                    auto upd_opt = parser_->parse_incremental(msg);
+                    if (!upd_opt) {
+                        return; // not a depthUpdate
                     }
 
-                    // Debug: print top-of-book after every message
-                    if (const auto *book = order_book()) {
-                        const auto &bb = book->best_bid();
-                        const auto &ba = book->best_ask();
+                    ctrl_->on_increment(*upd_opt);
 
-                        if (!bb.empty() && !ba.empty()) {
-                            std::cout << "[BINANCE BBO] "
-                                    << "bid=" << ticks_to_price(bb.price_ticks)
-                                    << " qty=" << lots_to_qty(bb.qty_lots)
-                                    << " | ask=" << ticks_to_price(ba.price_ticks)
-                                    << " qty=" << lots_to_qty(ba.qty_lots)
-                                    << '\n';
-                        } else {
-                            std::cout << "[BINANCE BBO] book empty or partially empty\n";
-                        }
+                    if (!ctrl_->is_synced()) {
+                        std::cerr << "[BINANCE] Book out-of-sync, requesting new snapshot...\n";
+                        request_snapshot();
+                    }
+
+                    const auto &book = ctrl_->book();
+                    const auto &bb = book.best_bid();
+                    const auto &ba = book.best_ask();
+
+                    if (!bb.empty() && !ba.empty()) {
+                        std::cout << "[BINANCE BBO] "
+                                << "bid=" << bb.price_ticks
+                                << " qty=" << bb.qty_lots
+                                << " | ask=" << ba.price_ticks
+                                << " qty=" << ba.qty_lots
+                                << '\n';
                     } else {
-                        std::cout << "[BINANCE BBO] order_book() is null\n";
+                        std::cout << "[BINANCE BBO] book empty or partially empty\n";
                     }
                 });
-
 
             ws_->set_on_close([this]() {
                 running_.store(false);
                 // TODO: health/state notify if needed
             });
+
             return Status::OK;
-        }
-
-        const L2Book *order_book() const noexcept {
-            return book_controller_ ? &book_controller_->book() : nullptr;
-        }
-
-        static double ticks_to_price(PriceTicks t) {
-            return static_cast<double>(t) / 100.0; // inverse of parse_price_to_ticks
-        }
-
-        static double lots_to_qty(QtyLots q) {
-            return static_cast<double>(q) / 1000.0; // inverse of parse_qty_to_lots
         }
 
         Status start() override {
@@ -149,8 +137,43 @@ namespace md {
         std::shared_ptr<RestClient> rest_;
         FeedHandlerConfig cfg_{};
         std::atomic<bool> running_{false};
-        std::unique_ptr<L2BookController> book_controller_;
-        std::unique_ptr<BinanceL2Parser> parser_;
+        std::unique_ptr<BinanceOrderBookController> ctrl_;
+        std::unique_ptr<BinanceStreamParser> parser_;
+
+        void request_snapshot() {
+            if (!parser_ || !ctrl_) return;
+
+            auto rest = std::make_shared<RestClient>(ioc_);
+
+            const std::string host   = "api.binance.com";
+            const std::string port   = "443";
+            std::string        symbol = boost::algorithm::to_upper_copy(cfg_.symbol);
+            const std::string target =
+                "/api/v3/depth?symbol=" + symbol +
+                "&limit=" + std::to_string(cfg_.depthLevel);
+
+            std::cout << "[BINANCE][REST] requesting snapshot https://"
+                      << host << ":" << port << target << "\n";
+
+            rest->async_get(
+                host, target, port,
+                [this, rest](boost::system::error_code ec, const std::string &body) {
+                    if (ec) {
+                        std::cerr << "[BINANCE][REST] snapshot error: "
+                                  << ec.message() << "\n";
+                        return;
+                    }
+                    if (!parser_ || !ctrl_) return;
+
+                    auto snap_opt = parser_->parse_snapshot(body);
+                    if (!snap_opt) {
+                        std::cerr << "[BINANCE][REST] failed to parse snapshot. Body: "
+                                  << body << "\n";
+                        return;
+                    }
+                    ctrl_->on_snapshot(*snap_opt);
+                });
+        }
     };
 
     // ---- Maker symbol exported for VenueFactory

@@ -23,4 +23,15 @@ namespace md {
         }
     };
 
+    // Helper: convert "12345.67" -> PriceTicks according to your scheme
+    static PriceTicks parse_price_to_ticks(const std::string& s) {
+        double px = std::stod(s);
+        return static_cast<PriceTicks>(px * 100.0); // example: 1 tick = 0.01
+    }
+
+    static QtyLots parse_qty_to_lots(const std::string& s) {
+        double q = std::stod(s);
+        return static_cast<QtyLots>(q * 1000.0); // example: 1 lot = 0.001
+    }
+
 } // namespace md
