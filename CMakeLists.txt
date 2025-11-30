@@ -65,6 +65,7 @@ target_include_directories(pop_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
 file(GLOB_RECURSE POP_PUBLIC_HEADERS
         CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/include/abstract/*.hpp"
+        "${CMAKE_SOURCE_DIR}/include/orderbook/*.hpp"
         "${CMAKE_SOURCE_DIR}/include/stream_parser/*.hpp"
         "${CMAKE_SOURCE_DIR}/include/*.hpp"
 )

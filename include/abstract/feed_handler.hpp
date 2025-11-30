@@ -49,14 +49,14 @@ namespace md {
      */
     enum class StreamKind {
         INCREMENTAL, ///< Full orderbook depth (venue-specific limit, e.g. 100/200)
-        DEPTH, ///< Top 5 levels per side
+        DEPTH5, ///< Top 5 levels per side
         UNKNOWN
     };
 
     inline const char *to_string(StreamKind k) {
         switch (k) {
             case StreamKind::INCREMENTAL: return "INCREMENTAL";
-            case StreamKind::DEPTH: return "DEPTH";
+            case StreamKind::DEPTH5: return "DEPTH5";
             default: return "UNKNOWN";
         }
     }

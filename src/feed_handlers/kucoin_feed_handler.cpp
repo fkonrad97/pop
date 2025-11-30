@@ -25,25 +25,14 @@ namespace md {
             if (running_.load()) return Status::ERROR;
             cfg_ = cfg;
 
-            ws_->set_on_message([this](const std::string &msg) {
-                // Use KucoinStreamParser (simdjson)
-                auto maybe_book = parser_->parse_depth5(msg);
-                if (!maybe_book) {
-                    // DEBUG: show the raw message when parsing fails
-                    std::cout << "[KUCOIN][PARSE_FAIL] msg = " << msg << "\n";
-                    return;
-                }
-
-                Depth5Book book = std::move(*maybe_book);
-                book.receive_ts = std::chrono::system_clock::now();
-
-                // For now: debug print; later: push to central brain / orderbook
-                std::cout << "[KUCOIN][BOOK] "
-                        << book.symbol << " "
-                        << "best_bid=" << book.best_bid()
-                        << " best_ask=" << book.best_ask()
-                        << "\n";
-            });
+            // Bind WS callbacks
+            ws_->set_on_raw_message(
+                [this](const char *data, std::size_t len)
+                {
+                    // turn bytes -> std::string for printing
+                    std::string msg(data, len);
+                    std::cout << "[KUCOIN RAW] " << msg << "\n";
+                });
 
             ws_->set_on_close([this]() {
                 running_.store(false);

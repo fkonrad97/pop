@@ -23,13 +23,20 @@ struct CmdOptions {
     bool show_help{false};
 };
 
-inline md::StreamKind parse_stream_kind(const std::string &s_raw) {
+inline md::StreamKind parse_stream_kind(const std::string &s_raw, const int depthLevel) {
     std::string s = s_raw;
     std::ranges::transform(s, s.begin(), ::tolower);
 
     if (s == "incremental") return md::StreamKind::INCREMENTAL;
-    if (s == "depth") return md::StreamKind::DEPTH;
-    return md::StreamKind::UNKNOWN;
+    if (s == "depth") { 
+        switch (depthLevel)
+        {
+        case 5:
+            return md::StreamKind::DEPTH5;
+        default:
+            throw std::invalid_argument("Invalid depth level for depth stream kind");
+        }
+    }
 }
 
 inline md::VenueId parse_venue(const std::string &v_raw) {

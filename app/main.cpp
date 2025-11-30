@@ -27,36 +27,18 @@ int main(int argc, char** argv) {
     }
 
     // ---------------------------------------------------------------------
+    // 3) Derive effective depthLevel
+    // ---------------------------------------------------------------------
+    int depth_level = 5; // default
+
+    // ---------------------------------------------------------------------
     // 2) Validate stream kind / channel
     // ---------------------------------------------------------------------
-    md::StreamKind kind = parse_stream_kind(options.channel);
+    md::StreamKind kind = parse_stream_kind(options.channel, depth_level);
     if (kind == md::StreamKind::UNKNOWN) {
         std::cerr << "Error: unknown stream type '" << options.channel
                   << "'. Expected one of: incremental, depth.\n";
         return 1;
-    }
-
-    // ---------------------------------------------------------------------
-    // 3) Derive effective depthLevel
-    // ---------------------------------------------------------------------
-    int depth_level = 0;
-
-    if (kind == md::StreamKind::DEPTH) {
-        // For depth streams, depthLevel must be provided and > 0
-        if (!options.depthLevel.has_value()) {
-            std::cerr << "Error: --depthLevel is required when channel=depth\n";
-            return 1;
-        }
-
-        depth_level = *options.depthLevel;
-        if (depth_level <= 0) {
-            std::cerr << "Error: --depthLevel must be > 0 (got "
-                      << depth_level << ")\n";
-            return 1;
-        }
-    } else {
-        // For incremental streams depth level is not used; keep 0
-        depth_level = 0;
     }
 
     // ---------------------------------------------------------------------

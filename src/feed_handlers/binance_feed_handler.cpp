@@ -13,50 +13,47 @@
 
 using json = nlohmann::json;
 
-namespace md {
+namespace md
+{
 
-    class BinanceFeedHandler final : public IVenueFeedHandler {
+    class BinanceFeedHandler final : public IVenueFeedHandler
+    {
     public:
         explicit BinanceFeedHandler(boost::asio::io_context &ioc)
-        : ioc_(ioc), ws_(std::make_shared<WsClient>(ioc)),
-          parser_(std::make_unique<BinanceStreamParser>()) {
+            : ioc_(ioc), ws_(std::make_shared<WsClient>(ioc)),
+              parser_(std::make_unique<BinanceStreamParser>())
+        {
         }
 
         /// 1. IVenueFeedHandler overrides ::
-        Status init(const FeedHandlerConfig &cfg) override {
-            if (running_.load()) return Status::ERROR;
+        Status init(const FeedHandlerConfig &cfg) override
+        {
+            if (running_.load())
+                return Status::ERROR;
 
             cfg_ = cfg;
 
             // Bind WS callbacks
-            ws_->set_on_message([this](const std::string &msg) {
-                auto maybe_book = parser_->parse_depth5(msg);
-                if (!maybe_book) {
-                    // DEBUG: show the raw message when parsing fails
-                    std::cout << "[BINANCE][PARSE_FAIL] msg = " << msg << "\n";
-                    return;
-                }
+            ws_->set_on_raw_message(
+                [this](const char *data, std::size_t len)
+                {
+                    // turn bytes -> std::string for printing
+                    std::string msg(data, len);
+                    std::cout << "[BINANCE RAW] " << data << "\n";
+                });
 
-                Depth5Book book = std::move(*maybe_book);
-                book.receive_ts = std::chrono::system_clock::now();
-
-                // For now: debug print; later: push to central brain / orderbook
-                std::cout << "[BINANCE][BOOK] "
-                        << book.symbol << " "
-                        << "best_bid=" << book.best_bid()
-                        << " best_ask=" << book.best_ask()
-                        << "\n";
-            });
-
-            ws_->set_on_close([this]() {
-                running_.store(false);
-                // TODO: health/state notify if needed
-            });
+            ws_->set_on_close([this]()
+                              {
+                                  running_.store(false);
+                                  // TODO: health/state notify if needed
+                              });
             return Status::OK;
         }
 
-        Status start() override {
-            if (running_.exchange(true)) return Status::ERROR; // already running
+        Status start() override
+        {
+            if (running_.exchange(true))
+                return Status::ERROR; // already running
 
             const std::string host = cfg_.ws_host.empty()
                                          ? "stream.binance.com"
@@ -68,14 +65,16 @@ namespace md {
             const std::string target = venue::resolve_stream_channel(*this, cfg_);
 
             std::cout << "[BINANCE] Connecting to wss://"
-                    << host << ":" << port << "/" << target << "\n";
+                      << host << ":" << port << "/" << target << "\n";
 
             ws_->connect(host, port, target);
             return Status::OK;
         }
 
-        Status stop() override {
-            if (!running_.exchange(false)) return Status::DISCONNECTED;
+        Status stop() override
+        {
+            if (!running_.exchange(false))
+                return Status::DISCONNECTED;
             ws_->close();
             return Status::CLOSED;
         }
@@ -83,7 +82,8 @@ namespace md {
         bool is_running() const override { return running_.load(); }
 
         /// 2. IChannelResolver overrides ::
-        std::string incrementalChannelResolver() override {
+        std::string incrementalChannelResolver() override
+        {
             return "@depth";
         }
 
@@ -94,14 +94,18 @@ namespace md {
          * Input example:
          *   5        -> "@depth5@100ms"
          */
-        std::string depthChannelResolver() override {
+        std::string depthChannelResolver() override
+        {
             std::string prefix = "/ws/" + cfg_.symbol;
 
-            switch (cfg_.depthLevel) {
-                case 5: {
-                    return prefix + "@depth5";
-                }
-                default: throw std::invalid_argument("Invalid depth level");
+            switch (cfg_.depthLevel)
+            {
+            case 5:
+            {
+                return prefix + "@depth5";
+            }
+            default:
+                throw std::invalid_argument("Invalid depth level");
             }
         }
 
@@ -117,7 +121,8 @@ namespace md {
     };
 
     // ---- Maker symbol exported for VenueFactory
-    std::unique_ptr<IVenueFeedHandler> make_binance_feed_handler(boost::asio::io_context &ioc) {
+    std::unique_ptr<IVenueFeedHandler> make_binance_feed_handler(boost::asio::io_context &ioc)
+    {
         return std::make_unique<BinanceFeedHandler>(ioc);
     }
 } // namespace md

@@ -30,25 +30,14 @@ namespace md {
 
             bitget_channel_ = venue::resolve_stream_channel(*this, cfg_);
 
-            ws_->set_on_message([this](const std::string &msg) {
-                std::cout << msg << std::endl;
-                auto maybe_book = parser_->parse_depth5(msg);
-                if (!maybe_book) {
-                    // DEBUG: show the raw message when parsing fails
-                    std::cout << "[BITGET][PARSE_FAIL] msg = " << msg << "\n";
-                    return;
-                }
-
-                Depth5Book book = std::move(*maybe_book);
-                book.receive_ts = std::chrono::system_clock::now();
-
-                // For now: debug print; later: push to central brain / orderbook
-                std::cout << "[BITGET][BOOK] "
-                        << book.symbol << " "
-                        << "best_bid=" << book.best_bid()
-                        << " best_ask=" << book.best_ask()
-                        << "\n";
-            });
+            // Bind WS callbacks
+            ws_->set_on_raw_message(
+                [this](const char *data, std::size_t len)
+                {
+                    // turn bytes -> std::string for printing
+                    std::string msg(data, len);
+                    std::cout << "[BITGET RAW] " << msg << "\n";
+                });
 
             ws_->set_on_close([this]() {
                 running_.store(false);

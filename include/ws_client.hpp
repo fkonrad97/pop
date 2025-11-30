@@ -37,8 +37,8 @@ namespace md {
      */
     class WsClient : public std::enable_shared_from_this<WsClient> {
     public:
-        /// Called for each received text frame (already aggregated by Beast if auto_fragment=false).
-        using MessageHandler = std::function<void(const std::string &)>;
+        /// raw view over the frame bytes (no allocations)
+        using RawMessageHandler = std::function<void(const char*, std::size_t)>;
 
         /// Called when the connection closes or any terminal error occurs (exactly once).
         using CloseHandler   = std::function<void()>;
@@ -57,7 +57,7 @@ namespace md {
          * @brief Begin the async connect chain.
          *
          * Steps (all async):
-         *   1) do_resolve_(host, port, target)         : DNS lookup
+         *   1) do_resolve_(host, port)         : DNS lookup
          *   2) do_tcp_connect_(results)                : connect TCP
          *   3) do_tls_handshake_()                     : client TLS handshake (SNI, verify)
          *   4) do_ws_handshake_()                      : WebSocket handshake (Host + target)
@@ -71,8 +71,8 @@ namespace md {
                      const std::string &port,
                      const std::string &target);
 
-        /// Attach a user handler for inbound text frames (JSON strings, etc.).
-        void set_on_message(MessageHandler h);
+        /// To be used by feed handlers.
+        void set_on_raw_message(RawMessageHandler h);
 
         /// Attach a user handler for close/loss-of-connection notification.
         void set_on_close(CloseHandler h);
@@ -126,9 +126,9 @@ namespace md {
         /// Guard to avoid double-close / re-entrancy on error paths.
         bool closing_ = false;
 
-        /// User-supplied callbacks (optional).
-        MessageHandler on_message_;
+        /// User-supplied callbacks
         CloseHandler   on_close_;
+        RawMessageHandler on_raw_message_;
         OpenHandler   on_open_;
 
         // =====================
@@ -141,7 +141,7 @@ namespace md {
          *
          * Also stores host_/target_ for SNI and WS Host header.
          */
-        void do_resolve_(const std::string& host, const std::string& port, const std::string& target);
+        void do_resolve_(const std::string& host, const std::string& port);
 
         /**
          * @brief Establish TCP connection to one of the resolved endpoints.
