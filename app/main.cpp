@@ -37,6 +37,8 @@ int main(int argc, char** argv) {
     md::FeedHandlerConfig cfg;
     cfg.venue_name  = venue;                        // enum VenueId
     cfg.symbol      = md::venue::map_ws_symbol(venue, options.base, options.quote);               // e.g. "BTC-USDT"
+    cfg.base_ccy    = options.base;
+    cfg.quote_ccy   = options.quote;
     cfg.stream_kind = kind;
     cfg.depthLevel  = options.depthLevel.value();
     cfg.ws_host     = options.ws_host.value_or("");    

@@ -22,7 +22,7 @@ namespace md {
         ssl_ctx_.set_verify_mode(ssl::verify_peer);
     }
 
-    void RestClient::async_get(std::string host, std::string target, std::string port, ResponseHandler cb) {
+    void RestClient::async_get(std::string host, std::string port, std::string target, ResponseHandler cb) {
         host_ = std::move(host);
         target_ = std::move(target);
         port_ = std::move(port);

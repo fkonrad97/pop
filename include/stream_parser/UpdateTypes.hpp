@@ -15,7 +15,7 @@ namespace md {
         std::uint64_t U; // first update ID in event
         std::uint64_t u; // last update ID in event
         std::uint64_t pu; // previousLastUpdateId (if you store it)
-        std::vector<std::pair<std::string, std::string> > bids;
-        std::vector<std::pair<std::string, std::string> > asks;
+        std::vector<std::pair<std::string, std::string>> bids;
+        std::vector<std::pair<std::string, std::string>> asks;
     };
 }

@@ -43,7 +43,7 @@ namespace md {
         /// Called when the connection closes or any terminal error occurs (exactly once).
         using CloseHandler   = std::function<void()>;
 
-        using OpenHandler    = std::function<void()>;   // NEW
+        using OpenHandler    = std::function<void()>; 
 
         /**
          * @brief Bind the client to the external event loop.

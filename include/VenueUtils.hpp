@@ -86,6 +86,26 @@ namespace md {
             }
         }
 
+        inline std::string map_rest_symbol(VenueId venue,
+                                         const std::string &base,
+                                         const std::string &quote) {
+            // Normalize to UPPER once
+            const std::string base_up = boost::algorithm::to_upper_copy(base);
+            const std::string quote_up = boost::algorithm::to_upper_copy(quote);
+
+            const std::string concat = base_up + quote_up; // "BTCUSDT"
+            const std::string dashed = base_up + "-" + quote_up; // "BTC-USDT"
+
+            switch (venue) {
+                case VenueId::BINANCE:
+                    // Binance WS paths expect lowercase "btcusdt"
+                    return boost::algorithm::to_upper_copy(concat);
+
+                default:
+                    throw std::invalid_argument("map_rest_symbol: unknown VenueId");
+            }
+        }
+
         // type must derive from IVenueFeedHandler
         template<typename T>
         concept VenueFeedHandler = std::derived_from<T, IVenueFeedHandler>;

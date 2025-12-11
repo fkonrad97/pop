@@ -73,6 +73,8 @@ namespace md {
         VenueId venue_name; ///< e.g. VenueId::BINANCE
 
         std::string symbol; ///< Symbol normalized to venue requirements
+        std::string base_ccy;  ///< e.g. "BTC"
+        std::string quote_ccy; ///< e.g. "USDT"
 
         std::string ws_host; ///< optional override, "" = default
         std::string ws_port; ///< optional override, "" = default
@@ -83,7 +85,7 @@ namespace md {
         std::string rest_path; ///< optional override, "" = default
 
         StreamKind stream_kind; ///< depth vs incremental
-        size_t depthLevel{0}; ///< only meaningful for depth
+        size_t depthLevel{0}; 
     };
 
     struct IChannelResolver {

@@ -12,7 +12,7 @@ struct CmdOptions {
     std::string base; // --base BTC
     std::string quote; // --quote USDT
     std::string channel; // required-ish, with default "depth"
-    std::optional<int> depthLevel; // only meaningful for depth channels
+    std::optional<int> depthLevel;
     std::optional<std::string> ws_host; // override or std::nullopt
     std::optional<std::string> ws_port; // override or std::nullopt
     std::optional<std::string> ws_path; // override or std::nullopt
@@ -68,7 +68,7 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
              "Quote asset, e.g. USDT")
             ("channel,c", po::value<std::string>()->default_value("depth"),
              "Stream type: incremental, depth")
-            ("depthLevel,dl", po::value<size_t>()->default_value(5),
+            ("depthLevel,dl", po::value<size_t>()->default_value(400),
              "Orderbook depth; required or defaults")
             ("ws_host", po::value<std::string>(),
              "Optional WebSocket host override")
