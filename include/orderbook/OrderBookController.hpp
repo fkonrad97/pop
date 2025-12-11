@@ -3,51 +3,73 @@
 #include <vector>
 #include <deque>
 #include "OrderBook.hpp"
+#include "utils/CheckSumUtils.hpp"
 
-struct GenericSnapshotFormat
-{
-    std::uint64_t lastUpdateId;
+struct GenericIncrementalFormat {
+    std::uint64_t first_seq{0};
+    std::uint64_t last_seq{0};
+    std::uint64_t prev_last{0};
+
+    std::int64_t checksum{0};
+
     std::vector<Level> bids;
     std::vector<Level> asks;
+
+    void reset() noexcept {
+        first_seq = last_seq = prev_last = 0;
+        checksum = 0;
+        bids.clear();
+        asks.clear();
+    }
 };
 
-struct GenericIncrementalFormat
-{
-    std::uint64_t first_seq;                // inclusive
-    std::uint64_t last_seq;                 // inclusive (can equal first_seq)
-    std::optional<std::uint64_t> prev_last; // if venue provides
+struct GenericSnapshotFormat {
+    std::uint64_t lastUpdateId{0};
+
+    std::int64_t checksum{0};
+
     std::vector<Level> bids;
     std::vector<Level> asks;
+
+    void reset() noexcept {
+        lastUpdateId = 0;
+        checksum = 0;
+        bids.clear();
+        asks.clear();
+    }
 };
 
-namespace md
-{
-    class OrderBookController
-    {
+namespace md {
+    class OrderBookController {
     public:
-        explicit OrderBookController(const std::size_t depth) : book_{depth} {}
+        explicit OrderBookController(const std::size_t depth) : book_{depth} {
+        }
 
-        virtual ~OrderBookController() = default;
+        ~OrderBookController() = default;
 
-        enum class Action
-        {
-            None, // all good
+        void configureChecksum(ChecksumFn fn, std::size_t topN) noexcept {
+            checksum_fn_ = fn;
+            checksum_topN_ = topN;
+        }
+
+        enum class BaselineKind : std::uint8_t { RestAnchored, WsAuthoritative };
+
+        enum class Action {
+            None,
             NeedResync
         };
 
-        enum class SyncState
-        {
+        enum class SyncState : std::uint8_t {
             WaitingSnapshot,
-            HaveSnapshot,
-            Synced,
-            Broken
+            WaitingBridge, // have snapshot, waiting for bridging incremental (RestAnchored)
+            Synced
         };
 
         /**
          * 'onSnapshot' process the incoming snapshot message from the exchange
          * @param msg - snapshot message
          */
-        Action onSnapshot(const GenericSnapshotFormat &msg);
+        Action onSnapshot(const GenericSnapshotFormat &msg, BaselineKind kind);
 
         /**
          * 'onIncrement' process the incoming incremental update message from the exchange
@@ -55,15 +77,11 @@ namespace md
          */
         Action onIncrement(const GenericIncrementalFormat &msg);
 
-        void applyIncrementUpdate(const GenericIncrementalFormat &upd);
-
-        void resetBook()
-        {
+        void resetBook() {
             book_.clear();
-            buffer_.clear();
             state_ = SyncState::WaitingSnapshot;
-            synced_ = false;
             last_seq_ = 0;
+            expected_seq_ = 0;
         }
 
         [[nodiscard]] const OrderBook &book() const noexcept { return book_; }
@@ -71,8 +89,7 @@ namespace md
         /**
          * 'isSynced' indicates whether the order book is currently synchronized with the exchange data feed.
          */
-        [[nodiscard]] bool isSynced() const noexcept
-        {
+        [[nodiscard]] bool isSynced() const noexcept {
             return state_ == SyncState::Synced;
         }
 
@@ -82,41 +99,26 @@ namespace md
         SyncState getSyncState() const noexcept { return state_; }
 
         /**
-         * 'setSyncState' sets the current synchronization state of the order book.
-         */
-        void setSyncState(SyncState state) noexcept
-        {
-            state_ = state;
-            synced_ = (state == SyncState::Synced);
-        }
-
-        /**
          * 'getAppliedSeqID' retrieves the last sequence ID that has been successfully applied to the order book.
          * 'setAppliedSeqID' sets the last sequence ID that has been successfully applied to the order book.
          */
         [[nodiscard]] std::uint64_t getAppliedSeqID() const noexcept { return last_seq_; }
-        void setAppliedSeqID(std::uint64_t seq) { last_seq_ = seq; }
-
-        /**
-         * Buffer of incremental updates received while not synced.
-         * 'getBuffer' retrieves the buffer of incremental updates.
-         * 'pushToBuffer' adds an incremental update to the buffer.
-         */
-        void pushToBuffer(const GenericIncrementalFormat &update) { buffer_.push_back(update); }
-        void popFromBuffer() { buffer_.pop_front(); }
-        std::size_t bufferSize() const { return buffer_.size(); }
-
-        /**
-         * 'processBuffer' attempts to process buffered incremental updates after a snapshot has been applied.
-         */
-        [[nodiscard]] bool processBuffer();
 
     private:
         OrderBook book_;
-        bool synced_{false};
-        SyncState state_;
-        std::deque<GenericIncrementalFormat> buffer_{};
-        std::uint64_t last_seq_{0};
-    };
+        SyncState state_{SyncState::WaitingSnapshot};
 
+        std::uint64_t last_seq_{0};
+        std::uint64_t expected_seq_{0}; // next expected first_seq for continuous stream
+
+        ChecksumFn checksum_fn_{nullptr};
+        std::size_t checksum_topN_{25};
+
+        bool validateChecksum(std::int64_t expected) const noexcept {
+            if (!checksum_fn_) return true;
+            return checksum_fn_(book_, expected, checksum_topN_);
+        }
+
+        void applyIncrementUpdate(const GenericIncrementalFormat &upd);
+    };
 }

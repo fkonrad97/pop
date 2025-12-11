@@ -37,30 +37,6 @@ namespace md {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 1) Logical stream kind
-    // -------------------------------------------------------------------------
-    /**
-     * @brief High-level logical stream / channel kind.
-     *
-     * The idea:
-     *  - You select what *type* of data you want (DEPTH vs TRADES, etc.)
-     *  - Each venue maps this to its own WS path / channel name.
-     */
-    enum class StreamKind {
-        INCREMENTAL, ///< Full orderbook depth (venue-specific limit, e.g. 100/200)
-        DEPTH, ///< Top x levels per side
-        UNKNOWN
-    };
-
-    inline const char *to_string(StreamKind k) {
-        switch (k) {
-            case StreamKind::INCREMENTAL: return "INCREMENTAL";
-            case StreamKind::DEPTH: return "DEPTH";
-            default: return "UNKNOWN";
-        }
-    }
-
     /**
      * @brief Minimal configuration for a venue feed.
      *
@@ -73,7 +49,7 @@ namespace md {
         VenueId venue_name; ///< e.g. VenueId::BINANCE
 
         std::string symbol; ///< Symbol normalized to venue requirements
-        std::string base_ccy;  ///< e.g. "BTC"
+        std::string base_ccy; ///< e.g. "BTC"
         std::string quote_ccy; ///< e.g. "USDT"
 
         std::string ws_host; ///< optional override, "" = default
@@ -84,16 +60,7 @@ namespace md {
         std::string rest_port; ///< optional override, "" = default
         std::string rest_path; ///< optional override, "" = default
 
-        StreamKind stream_kind; ///< depth vs incremental
-        size_t depthLevel{0}; 
-    };
-
-    struct IChannelResolver {
-        virtual ~IChannelResolver() = default;
-
-        virtual std::string incrementalChannelResolver() = 0;
-
-        virtual std::string depthChannelResolver() = 0;
+        size_t depthLevel{0};
     };
 
     /**
@@ -109,8 +76,8 @@ namespace md {
      *   - start() may be called once; repeated calls should return ERROR or no-op safely.
      *   - stop() is idempotent; it must not throw; it should cause on-close/health updates as appropriate.
      */
-    struct IVenueFeedHandler : IChannelResolver {
-        ~IVenueFeedHandler() override = default;
+    struct IVenueFeedHandler {
+        virtual ~IVenueFeedHandler() = default;
 
         /// Prepare resources and validate configuration. Should NOT block on network.
         virtual Status init(const FeedHandlerConfig &) = 0;
@@ -120,11 +87,5 @@ namespace md {
 
         /// Gracefully stop: close sockets and cancel timers. Safe to call multiple times.
         virtual Status stop() = 0;
-
-        virtual bool is_running() const = 0;
     };
-
-    template<typename T>
-    concept VenueFeedHandler =
-            std::is_base_of_v<IVenueFeedHandler, T>;
 } // namespace md

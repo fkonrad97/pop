@@ -1,174 +1,151 @@
-
 #include "orderbook/OrderBookController.hpp"
+
+#include <algorithm>
 #include <iostream>
 
-namespace md
-{
-    OrderBookController::Action OrderBookController::onSnapshot(const GenericSnapshotFormat &msg)
-    {
-        /// 0. Reset the whole book first and set the last updated  id
+namespace md {
+    OrderBookController::Action
+    OrderBookController::onSnapshot(const GenericSnapshotFormat &msg, BaselineKind kind) {
         resetBook();
-        setAppliedSeqID(msg.lastUpdateId);
 
         std::vector<Level> bids = msg.bids;
         std::vector<Level> asks = msg.asks;
 
-        /// 1) Asks sorted by price levels
         std::sort(asks.begin(), asks.end(),
-                  [](const auto &x, const auto &y)
-                  { return x.priceTick < y.priceTick; });
+                  [](const Level &x, const Level &y) { return x.priceTick < y.priceTick; });
 
-        /// 2) Bids sorted by price levels
         std::sort(bids.begin(), bids.end(),
-                  [](const auto &x, const auto &y)
-                  { return x.priceTick > y.priceTick; });
+                  [](const Level &x, const Level &y) { return x.priceTick > y.priceTick; });
 
-        /// 3) Update internal book
-        for (const Level &lvl : bids)
-            book_.update<Side::BID>(lvl);
-        for (const Level &lvl : asks)
-            book_.update<Side::ASK>(lvl);
+        for (const Level &lvl: bids) book_.update<Side::BID>(lvl);
+        for (const Level &lvl: asks) book_.update<Side::ASK>(lvl);
 
-        /// 4) After applied the snapshot, the SyncState becomes HaveSnapshot
-        setSyncState(SyncState::HaveSnapshot);
+        last_seq_ = msg.lastUpdateId;
+        expected_seq_ = last_seq_ + 1;
 
-        // 5) Try to consume buffered updates
-        if (!processBuffer())
-        {
-            setSyncState(SyncState::Broken);
-            return Action::NeedResync;
+        const bool checksum_enabled = (checksum_fn_ != nullptr);
+
+        // If checksum is enabled, require it to be present and correct.
+        if (checksum_enabled) {
+            if (msg.checksum == 0) {
+                resetBook();
+                return Action::NeedResync;
+            }
+            if (!validateChecksum(msg.checksum)) {
+                resetBook();
+                return Action::NeedResync;
+            }
         }
 
-        setSyncState(SyncState::Synced);
+        state_ = (kind == BaselineKind::WsAuthoritative)
+                     ? SyncState::Synced
+                     : SyncState::WaitingBridge;
 
         return Action::None;
     }
 
-    OrderBookController::Action OrderBookController::onIncrement(const GenericIncrementalFormat &msg)
-    {
-        switch (getSyncState())
-        {
-        case SyncState::WaitingSnapshot:
-        {
-            pushToBuffer(msg);
-            std::cout << bufferSize() << " buffered updates while waiting for snapshot // SyncState::WaitingSnapshot \n";
-            return Action::None;
+    OrderBookController::Action
+    OrderBookController::onIncrement(const GenericIncrementalFormat &msg) {
+        if (state_ == SyncState::WaitingSnapshot) {
+            return Action::None; // handler buffers
         }
 
-        case SyncState::HaveSnapshot:
-        {
-            pushToBuffer(msg);
-            std::cout << bufferSize() << " buffered updates // SyncState::HaveSnapshot \n";
-            return Action::None;
-        }
+        const bool has_seq = (msg.last_seq != 0);
+        const bool checksum_enabled = (checksum_fn_ != nullptr);
 
-        case SyncState::Synced:
-        {
-            std::cout << bufferSize()
-                      << " buffered updates // SyncState::Synced \n";
-
-            const std::uint64_t applied = getAppliedSeqID();
-
-            // 1) Fully outdated -> ignore
-            if (msg.last_seq <= applied)
-            {
-                return Action::None;
-            }
-
-            // 2) If msg starts after the next expected seq -> we missed updates
-            const std::uint64_t next_expected = applied + 1;
-            if (msg.first_seq > next_expected)
-            {
-                setSyncState(SyncState::Broken);
-                pushToBuffer(msg); // optional: keep it for debugging
-                return Action::NeedResync;
-            }
-
-            // 3) Normal overlap/cover case: buffer + drain
-            pushToBuffer(msg);
-
-            const bool ok = processBuffer();
-            if (!ok)
-            {
-                setSyncState(SyncState::Broken);
-                return Action::NeedResync;
-            }
-
-            return Action::None;
-        }
-
-        case SyncState::Broken:
-        {
-            pushToBuffer(msg);
-            std::cout << bufferSize()
-                      << " buffered updates // SyncState::Broken \n";
+        if (!has_seq && !checksum_enabled) {
             return Action::NeedResync;
         }
+
+        // ---- Bridging phase (RestAnchored) ----
+        // ---- Bridging phase (RestAnchored) ----
+        if (state_ == SyncState::WaitingBridge) {
+            if (has_seq) {
+                const std::uint64_t required = expected_seq_;
+
+                std::cerr << "[CTRL][BRIDGE] last_seq_=" << last_seq_
+                        << " required=" << required
+                        << " msg.first=" << msg.first_seq
+                        << " msg.last=" << msg.last_seq
+                        << "\n";
+
+                if (msg.last_seq < required) {
+                    std::cerr << "[CTRL][BRIDGE] IGNORE too-old: msg.last < required ("
+                            << msg.last_seq << " < " << required << ")\n";
+                    return Action::None;
+                }
+
+                if (msg.first_seq > required) {
+                    std::cerr << "[CTRL][BRIDGE] RESYNC gap: msg.first > required ("
+                            << msg.first_seq << " > " << required << ")\n";
+                    return Action::NeedResync;
+                }
+
+                // Covers required (overlap OK for absolute level-set updates)
+                std::cerr << "[CTRL][BRIDGE] APPLY covers required=" << required
+                        << " (first=" << msg.first_seq << ", last=" << msg.last_seq << ")\n";
+
+                applyIncrementUpdate(msg);
+                last_seq_ = msg.last_seq;
+                expected_seq_ = last_seq_ + 1;
+                state_ = SyncState::Synced;
+
+                std::cerr << "[CTRL][BRIDGE] -> Synced last_seq_=" << last_seq_
+                        << " expected_seq_=" << expected_seq_ << "\n";
+            } else {
+                std::cerr << "[CTRL][BRIDGE] APPLY seq-less -> Synced\n";
+                applyIncrementUpdate(msg);
+                state_ = SyncState::Synced;
+            }
+
+            if (checksum_enabled) {
+                if (msg.checksum == 0) {
+                    std::cerr << "[CTRL][BRIDGE] RESYNC missing checksum while enabled\n";
+                    resetBook();
+                    return Action::NeedResync;
+                }
+                if (!validateChecksum(msg.checksum)) {
+                    std::cerr << "[CTRL][BRIDGE] RESYNC checksum mismatch\n";
+                    resetBook();
+                    return Action::NeedResync;
+                }
+            }
+
+            return Action::None;
+        }
+
+        // ---- Steady-state (Synced) ----
+        if (has_seq) {
+            const std::uint64_t required = expected_seq_;
+
+            if (msg.last_seq < required) return Action::None; // outdated
+            if (msg.first_seq > required) return Action::NeedResync; // gap
+
+            // overlap/cover is OK
+            applyIncrementUpdate(msg);
+            last_seq_ = msg.last_seq;
+            expected_seq_ = last_seq_ + 1;
+        } else {
+            // seq-less venue: checksum is the integrity guard
+            applyIncrementUpdate(msg);
+        }
+
+        if (checksum_enabled) {
+            if (msg.checksum == 0) {
+                resetBook();
+                return Action::NeedResync;
+            }
+            if (!validateChecksum(msg.checksum)) {
+                resetBook();
+                return Action::NeedResync;
+            }
         }
 
         return Action::None;
     }
 
-    bool OrderBookController::processBuffer()
-    {
-        std::uint64_t lastApplied = getAppliedSeqID();
-
-        // 1) Drop fully outdated events (their last_seq is at/before what we already applied)
-        while (!buffer_.empty())
-        {
-            const GenericIncrementalFormat &front = buffer_.front();
-            if (front.last_seq <= lastApplied)
-            {
-                popFromBuffer();
-                continue;
-            }
-            break;
-        }
-
-        if (buffer_.empty())
-        {
-            return true; // nothing to apply
-        }
-
-        // 4) Apply events sequentially as long as they keep covering the next expected seq
-        while (!buffer_.empty())
-        {
-            const std::uint64_t required = lastApplied + 1;
-
-            // If this event no longer covers what we need, stop here (gap)
-            const GenericIncrementalFormat &ev = buffer_.front();
-            if (ev.first_seq > required || ev.last_seq < required)
-            {
-                return false; // gap detected
-            }
-
-            // Apply
-            applyIncrementUpdate(ev);
-
-            // Advance last applied sequence and pop
-            lastApplied = ev.last_seq;
-            setAppliedSeqID(lastApplied);
-            popFromBuffer();
-
-            // Drop any newly outdated (due to overlap)
-            while (!buffer_.empty() && buffer_.front().last_seq <= lastApplied)
-            {
-                popFromBuffer();
-            }
-        }
-
-        return true;
+    void OrderBookController::applyIncrementUpdate(const GenericIncrementalFormat &upd) {
+        for (const Level &lvl: upd.bids) book_.update<Side::BID>(lvl);
+        for (const Level &lvl: upd.asks) book_.update<Side::ASK>(lvl);
     }
-
-    void OrderBookController::applyIncrementUpdate(const GenericIncrementalFormat &upd)
-    {
-        for (const Level &lvl : upd.bids)
-        {
-            book_.update<Side::BID>(lvl);
-        }
-        for (const Level &lvl : upd.asks)
-        {
-            book_.update<Side::ASK>(lvl);
-        }
-    }
-}
+} // namespace md

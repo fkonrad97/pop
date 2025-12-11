@@ -9,6 +9,9 @@ struct Level {
     std::int64_t priceTick;
     std::int64_t quantityLot;
 
+    std::string price;
+    std::string quantity;
+
     bool isEmpty() const { return (quantityLot == 0); }
 };
 
@@ -38,6 +41,19 @@ namespace md {
             bids.reserve(depth + 1);
             asks.reserve(depth + 1);
         }
+
+        const Level *bid_ptr(std::size_t i) const noexcept {
+            if (i >= bids.size()) return nullptr;
+            if (bids[i].isEmpty()) return nullptr;
+            return &bids[i];
+        }
+
+        const Level *ask_ptr(std::size_t i) const noexcept {
+            if (i >= asks.size()) return nullptr;
+            if (asks[i].isEmpty()) return nullptr;
+            return &asks[i];
+        }
+
 
         /**
          * 'update' handes the incoming updates to the order book from the exchange
@@ -150,8 +166,7 @@ namespace md {
          * - All levels on both sides are reset to empty (Level{}).
          * - Depth and vector sizes are preserved: bids_.size() == asks_.size() == depth_.
          */
-        void clear() noexcept
-        {
+        void clear() noexcept {
             std::fill(bids.begin(), bids.end(), Level{});
             std::fill(asks.begin(), asks.end(), Level{});
         }
@@ -159,16 +174,14 @@ namespace md {
         /**
          * Returns the top-of-book bid level (index 0).
          */
-        [[nodiscard]] const Level &best_bid() const noexcept
-        {
+        [[nodiscard]] const Level &best_bid() const noexcept {
             return bids.front();
         }
 
         /**
          * Returns the top-of-book ask level (index 0).
          */
-        [[nodiscard]] const Level &best_ask() const noexcept
-        {
+        [[nodiscard]] const Level &best_ask() const noexcept {
             return asks.front();
         }
 
