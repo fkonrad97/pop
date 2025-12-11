@@ -2,11 +2,6 @@
 #include "stream_parser/UpdateTypes.hpp"
 #include <nlohmann/json.hpp>
 #include "orderbook/OrderBookUtils.hpp"
-<<<<<<< HEAD
-
-#include "orderbook/NParentOrderBookController.hpp"
-=======
->>>>>>> fe24573 (Refactor Order Book Implementation)
 
 using json = nlohmann::json;
 
