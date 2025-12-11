@@ -2,14 +2,16 @@
 #include "stream_parser/UpdateTypes.hpp"
 #include <nlohmann/json.hpp>
 
+#include "orderbook/NParentOrderBookController.hpp"
+
 using json = nlohmann::json;
 
 namespace md {
-    std::optional<BinanceSnapshot> BinanceStreamParser::parse_snapshot(std::string_view msg) const {
+    std::optional<GenericSnapshotFormat> BinanceStreamParser::parse_snapshot(std::string_view msg) const {
         try {
             json j = json::parse(msg);
 
-            BinanceSnapshot snap;
+            GenericSnapshotFormat snap;
             snap.lastUpdateId = j["lastUpdateId"].get<std::uint64_t>();
 
             for (const auto &b: j["bids"]) {
