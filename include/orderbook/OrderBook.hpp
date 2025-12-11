@@ -1,248 +1,188 @@
 #pragma once
 
-#include <algorithm>
 #include <vector>
+#include <algorithm>
 #include <cassert>
-#include <span>
+#include <cstdint>
 
-#include "OrderBookUtils.hpp"
+struct Level {
+    std::int64_t priceTick;
+    std::int64_t quantityLot;
 
-namespace md
-{
-    class OrderBook
-    {
+    bool isEmpty() const { return (quantityLot == 0); }
+};
+
+enum class Side {
+    BID,
+    ASK
+};
+
+/**
+ * Notes:
+ * - To confirm empirically, compile with optimizations (-O2/-O3) and check the emitted assembly (e.g., Compiler Explorer).
+ *   It should show two separate instantiations where the container address is fixed.
+ * - 'lower_bound' does a binary search O(log(N) and returns the insertion point.
+ * - Check which is faster in this case, 'lower_bound' or 'find_if'
+ * - Both above needs already sorted lists !!!
+ */
+namespace md {
+    class OrderBook {
     public:
-        explicit OrderBook(const std::size_t depth)
-            : depth_{depth},
-              bids_(depth),
-              asks_(depth)
-        {
-            assert(depth_ > 0 && "L2Book depth must be > 0");
+        explicit OrderBook(std::size_t depth) : depth(depth) {
+            assert(depth > 0 && "Order Book depth must be greater than 0!");
+
+            /// For both vector, (depth + 1) space alocated. The plus 1 is needed to not have any reallocation,
+            /// when the update of the Order Book exceeds the depth by 1 if it full and we have an update to it.
+            /// The update first insert and then pop_back,
+            /// so for a small fraction of time, we exceeds depth, and that would result reallocation. (See Option C. at update())
+            bids.reserve(depth + 1);
+            asks.reserve(depth + 1);
         }
 
-        [[nodiscard]] std::size_t depth() const noexcept { return depth_; }
-
-        /// Read-only view of bid levels.
-        /// Invariant: index 0 is best bid.
-        [[nodiscard]] const std::vector<L2Level> &bids() const noexcept
-        {
-            return bids_;
-        }
-
-        /// Read-only view of ask levels.
-        /// Invariant: index 0 is best ask.
-        [[nodiscard]] const std::vector<L2Level> &asks() const noexcept
-        {
-            return asks_;
-        }
-
-        /// Applies a full-depth snapshot for the given book side.
-        ///
-        /// Expectations:
-        ///   - `levels[0]` is the best price for that side,
-        ///     `levels[1]` the next, etc. (already sorted by the feed).
-        ///   - The snapshot may contain fewer levels than `depth()`.
-        ///
-        /// Behavior:
-        ///   - Copies up to `min(depth(), levels.size())` entries from `levels`
-        ///     into the internal side vector (bids_ or asks_).
-        ///   - Any remaining levels (if the snapshot is shallower than `depth()`)
-        ///     are reset to empty (`L2Level{}`).
-        ///   - Never resizes the underlying vectors, so the invariant
-        ///       bids_.size() == asks_.size() == depth()
-        ///     is preserved.
-        ///
-        /// Complexity:
-        ///   - O(depth()), no dynamic allocations.
-        ///
-        /// Notes:
-        ///   - After this call, `best_bid()` / `best_ask()` for the given side
-        ///     reflect the new snapshot (possibly logically empty if qty_lots == 0).
-        void apply_snapshot(BookSide side, std::span<const L2Level> levels) noexcept
-        {
-            // Select destination side (bids or asks)
-            auto &dst = (side == BookSide::Bid) ? bids_mut() : asks_mut();
-
-            const std::size_t n = std::min(depth_, levels.size());
-
-            // Copy as many levels as both book and snapshot have
-            std::copy_n(levels.begin(), n, dst.begin());
-
-            // Zero out remaining levels if snapshot is shallower than depth_
-            if (n < depth_)
-            {
-                std::fill(dst.begin() + n, dst.end(), L2Level{});
-            }
-
-            // During development-time:
-            assert(dst.size() == depth_);
-        }
-
-        /// Applies a single incremental update for the given side.
-        ///
-        /// Semantics:
-        ///   - If qty <= 0:
-        ///       * If a level with the given price exists, it is removed:
-        ///         subsequent levels are shifted up, and the last slot is cleared.
-        ///       * If no level with this price exists, the update is ignored.
-        ///   - If qty > 0:
-        ///       * If a level with the given price exists, its quantity is replaced
-        ///         (`qty_lots = qty`).
-        ///       * If no level with this price exists, a new level is inserted at the
-        ///         appropriate sorted position (bids: descending price, asks: ascending),
-        ///         shifting worse levels down and dropping the last level if needed.
-        ///         If the new price is worse than all existing levels and the book is
-        ///         full, the update is ignored.
-        ///
-        /// Invariants:
-        ///   - The side vector (bids_ or asks_) remains sorted by price:
-        ///       * Bids: highest price at index 0, decreasing.
-        ///       * Asks: lowest price at index 0, increasing.
-        ///   - The side vector remains compact:
-        ///       * All non-empty levels come first, any empty levels (if any) are at
-        ///         the tail.
-        ///   - The function never resizes the underlying vectors.
-        ///
-        /// Complexity:
-        ///   - O(depth()) in the worst case (linear search + shift).
-        void apply_increment(BookSide side, PriceTicks price, QtyLots qty) noexcept
-        {
-            auto &levels = (side == BookSide::Bid) ? bids_mut() : asks_mut();
-
-            const std::size_t n = depth_; // same as levels.size()
-
-            // 1) Search for an existing level with this price
-            std::size_t idx = n;
-            for (std::size_t i = 0; i < n; ++i)
-            {
-                if (!levels[i].empty() && levels[i].price_ticks == price)
-                {
-                    idx = i;
-                    break;
-                }
-                // stop early if we hit the first empty slot (book is compact)
-                if (levels[i].empty())
-                {
-                    break;
-                }
-            }
-
-            // 2) Deletion / clear case: qty <= 0
-            if (qty <= 0)
-            {
-                if (idx == n)
-                {
-                    // Price not found: nothing to delete
-                    return;
-                }
-
-                // Shift levels above idx down by one to keep compactness
-                for (std::size_t i = idx; i + 1 < n; ++i)
-                {
-                    levels[i] = levels[i + 1];
-                }
-                // Clear the last slot
-                levels[n - 1] = L2Level{};
+        /**
+         * 'update' handes the incoming updates to the order book from the exchange
+         * @tparam S - side of the orderbook (ask or bid)
+         * @param level - the update coming from the exchange
+         */
+        template<Side S>
+        void update(const Level &level) {
+            if (level.isEmpty()) {
+                this->remove<S>(level.priceTick);
                 return;
             }
 
-            // 3) Update case: qty > 0
-            if (idx != n)
-            {
-                // Existing price level: just update quantity
-                levels[idx].qty_lots = qty;
+            std::vector<Level> &vec = (S == Side::BID) ? bids : asks;
+            std::vector<Level>::iterator it = vec.begin();
+            const std::int64_t updateTick = level.priceTick;
+
+            if constexpr (S == Side::BID) {
+                it = std::lower_bound(vec.begin(), vec.end(), updateTick,
+                                      [](const Level &obLevel, std::int64_t _updateTick) {
+                                          /// 'it' becomes the first position where ob.priceTick > tick is false
+                                          return obLevel.priceTick > _updateTick;
+                                      });
+            } else {
+                it = std::lower_bound(vec.begin(), vec.end(), updateTick,
+                                      [](const Level &obLevel, std::int64_t _updateTick) {
+                                          return obLevel.priceTick < _updateTick;
+                                      });
+            }
+
+            /// Option A.: The item is in the order book, just the quantity of it updates.
+            if (it != vec.end() && it->priceTick == updateTick) {
+                it->quantityLot = level.quantityLot;
                 return;
             }
 
-            // 4) Insert new price level (book may or may not be full)
-            // Determine insertion position based on side ordering.
-            auto better = [side](PriceTicks lhs, PriceTicks rhs) noexcept
-            {
-                if (side == BookSide::Bid)
-                {
-                    // Higher price is better for bids
-                    return lhs > rhs;
-                }
-                else
-                {
-                    // Lower price is better for asks
-                    return lhs < rhs;
-                }
-            };
-
-            // Find first position where new price is not "better" than existing level,
-            // or the first empty slot.
-            std::size_t insert_pos = n;
-            for (std::size_t i = 0; i < n; ++i)
-            {
-                if (levels[i].empty())
-                {
-                    insert_pos = i;
-                    break;
-                }
-                if (!better(levels[i].price_ticks, price))
-                {
-                    // levels[i] is not better than the new price → insert here
-                    insert_pos = i;
-                    break;
-                }
-            }
-
-            if (insert_pos == n)
-            {
-                // Book is full and new price is strictly worse than all existing levels:
-                // drop this update.
+            /// Option B.: If we have room, insert anywhere (including end)
+            if (vec.size() < depth) {
+                vec.insert(it, level);
                 return;
             }
 
-            // Shift worse levels down by one (from the tail to insert_pos+1),
-            // dropping the worst level if the book is full.
-            for (std::size_t i = n - 1; i > insert_pos; --i)
-            {
-                levels[i] = levels[i - 1];
+            /// Option C.: insert only if it improves top-N (i.e., not at end)
+            if (it != vec.end()) {
+                vec.insert(it, level);
+                vec.pop_back(); // drops last element, since depth have to be ensured
+            }
+        }
+
+        /**
+         * 'remove' erase the level which got quantity=0 update
+         * std::find_if does a linear scan - O(n)
+         * std::lower_bound does a binary search - O(log(n))
+         */
+        template<Side S>
+        void remove(std::int64_t priceTick) {
+            std::vector<Level> &vec = S == Side::BID ? bids : asks; // resolved at compile time
+            std::vector<Level>::iterator it = vec.begin();
+
+            if constexpr (S == Side::BID) {
+                it = std::lower_bound(vec.begin(), vec.end(), priceTick,
+                                      [](const Level &obLevel, std::int64_t _priceTick) {
+                                          return obLevel.priceTick > _priceTick;
+                                      });
+            } else {
+                it = std::lower_bound(vec.begin(), vec.end(), priceTick,
+                                      [](const Level &obLevel, std::int64_t _priceTick) {
+                                          return obLevel.priceTick < _priceTick;
+                                      });
             }
 
-            // Place new level at insert_pos
-            levels[insert_pos].price_ticks = price;
-            levels[insert_pos].qty_lots = qty;
+            if (it != vec.end() && it->priceTick == priceTick) {
+                vec.erase(it);
+            }
         }
 
-        /// Returns the top-of-book bid level (index 0).
-        /// May be logically empty (qty_lots == 0) if there is no active bid.
-        [[nodiscard]] const L2Level &best_bid() const noexcept
-        {
-            return bids_.front();
+        /**
+ * Check price level uniqueness and sortedness
+ */
+        [[nodiscard]] bool validate() const {
+            // 1) Depth sanity
+            if (bids.size() > depth) return false;
+            if (asks.size() > depth) return false;
+
+            // 2) Sortedness + uniqueness:
+            // bids must be strictly decreasing: bids[i-1].priceTick > bids[i].priceTick
+            for (std::size_t i = 1; i < bids.size(); ++i) {
+                if (bids[i - 1].priceTick <= bids[i].priceTick) {
+                    return false; // not sorted DESC or duplicate tick
+                }
+            }
+
+            // asks must be strictly increasing: asks[i-1].priceTick < asks[i].priceTick
+            for (std::size_t i = 1; i < asks.size(); ++i) {
+                if (asks[i - 1].priceTick >= asks[i].priceTick) {
+                    return false; // not sorted ASC or duplicate tick
+                }
+            }
+
+            // 3) Reject empty levels lingering in book if there can be any
+            for (const Level &l: bids) if (l.isEmpty()) return false;
+            for (const Level &l: asks) if (l.isEmpty()) return false;
+
+            return true;
         }
 
-        /// Returns the top-of-book ask level (index 0).
-        /// May be logically empty (qty_lots == 0) if there is no active ask.
-        [[nodiscard]] const L2Level &best_ask() const noexcept
-        {
-            return asks_.front();
-        }
-
-        /// Clears the entire book.
-        ///
-        /// Semantics:
-        ///   - All levels on both sides are reset to empty (L2Level{}).
-        ///   - Depth and vector sizes are preserved:
-        ///       bids_.size() == asks_.size() == depth_.
-        ///   - After this call, best_bid() and best_ask() will return
-        ///     logically empty levels (qty_lots == 0, etc.).
+        /**
+         * Clears the entire book.
+         * 
+         * - All levels on both sides are reset to empty (Level{}).
+         * - Depth and vector sizes are preserved: bids_.size() == asks_.size() == depth_.
+         */
         void clear() noexcept
         {
-            std::fill(bids_.begin(), bids_.end(), L2Level{});
-            std::fill(asks_.begin(), asks_.end(), L2Level{});
+            std::fill(bids.begin(), bids.end(), Level{});
+            std::fill(asks.begin(), asks.end(), Level{});
+        }
+
+        /**
+         * Returns the top-of-book bid level (index 0).
+         */
+        [[nodiscard]] const Level &best_bid() const noexcept
+        {
+            return bids.front();
+        }
+
+        /**
+         * Returns the top-of-book ask level (index 0).
+         */
+        [[nodiscard]] const Level &best_ask() const noexcept
+        {
+            return asks.front();
         }
 
     private:
-        /// Internal mutable access – use only inside book methods.
-        std::vector<L2Level> &bids_mut() noexcept { return bids_; }
-        std::vector<L2Level> &asks_mut() noexcept { return asks_; }
+        std::size_t depth;
 
-        // Invariant: bids_.size() == asks_.size() == depth_
-        std::size_t depth_{0};
-        std::vector<L2Level> bids_;
-        std::vector<L2Level> asks_;
+        /**
+         * sorted descending by priceTick
+         */
+        std::vector<Level> bids;
+
+        /**
+         * sorted ascending by priceTick
+         */
+        std::vector<Level> asks;
     };
-} // namespace md
+}

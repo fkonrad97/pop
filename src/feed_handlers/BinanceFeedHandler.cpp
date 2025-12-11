@@ -5,7 +5,7 @@
 #include <iostream>
 #include <atomic>
 #include "VenueUtils.hpp"
-#include "orderbook/BinanceOrderBookController.hpp"
+#include "orderbook/OrderBookController.hpp"
 #include "stream_parser/BinanceStreamParser.hpp"
 #include "orderbook/OrderBookUtils.hpp"
 
@@ -34,7 +34,7 @@ namespace md
             this->setVenueAddresses();
 
             // Construct controller + parser here, when we know depth
-            ctrl_ = std::make_unique<BinanceOrderBookController>(depth);
+            ctrl_ = std::make_unique<OrderBookController>(depth);
             parser_ = std::make_unique<BinanceStreamParser>();
 
             ws_->set_on_open([this]()
@@ -43,10 +43,11 @@ namespace md
                                 std::cout << "[BINANCE] WebSocket connection established.\n";
 
                                  /// Reset controller state/book/buffer
-                                ctrl_->reset();
+                                ctrl_->resetBook();
 
                                 /// Trigger initial snapshot request
-                                request_snapshot(); });
+                                request_snapshot(); 
+                            });
 
             // Wire WS -> parser -> controller
             ws_->set_on_raw_message(
@@ -63,12 +64,12 @@ namespace md
                         return; // not a depthUpdate
                     }
 
-                    auto action = ctrl_->on_increment(*upd_opt);
+                    auto action = ctrl_->onIncrement(*upd_opt);
 
                     std::cout << "[BINANCE] received depth update U="
-                              << upd_opt->U << " u=" << upd_opt->u << " bids=" << upd_opt->bids.size() << " asks=" << upd_opt->asks.size() << "\n";
+                              << upd_opt->first_seq << " u=" << upd_opt->last_seq << " bids=" << upd_opt->bids.size() << " asks=" << upd_opt->asks.size() << "\n";
 
-                    if (action == BinanceOrderBookController::Action::NeedResync)
+                    if (action == OrderBookController::Action::NeedResync)
                     {
                         // A gap was detected; get a new snapshot
                         request_snapshot();
@@ -81,12 +82,10 @@ namespace md
                         const auto &ba = book.best_ask();
 
                         std::cout << "[BINANCE BOOK] "
-                                  << "bid=" << bb.price_ticks
-                                  << " qty=" << bb.qty_lots
-                                  << " size=" << book.bids().size()
-                                  << " | ask=" << ba.price_ticks
-                                  << " qty=" << ba.qty_lots
-                                  << " size=" << book.asks().size()
+                                  << "bid=" << bb.priceTick
+                                  << " qty=" << bb.quantityLot
+                                  << " | ask=" << ba.priceTick
+                                  << " qty=" << ba.quantityLot
                                   << '\n';
                     }
                 });
@@ -167,7 +166,7 @@ namespace md
         std::shared_ptr<WsClient> ws_;
         std::shared_ptr<RestClient> rest_;
         FeedHandlerConfig cfg_{};
-        std::unique_ptr<BinanceOrderBookController> ctrl_;
+        std::unique_ptr<OrderBookController> ctrl_;
         std::unique_ptr<BinanceStreamParser> parser_;
 
         /// Flags ::
@@ -229,7 +228,7 @@ namespace md
                                   << body << "\n";
                         return;
                     }
-                    ctrl_->on_snapshot(*snap_opt);
+                    ctrl_->onSnapshot(*snap_opt);
                 });
         }
     };
