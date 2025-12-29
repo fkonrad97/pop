@@ -1,10 +1,10 @@
-#include "ws_client.hpp"
+#include "../../include/client_connection_handlers/WsClient.hpp"
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/version.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/connect.hpp>
-#include <openssl/ssl.h>   // for SSL_set_tlsext_host_name
+#include <openssl/ssl.h> // for SSL_set_tlsext_host_name
 #include <iostream>
 
 namespace md {
@@ -30,18 +30,20 @@ namespace md {
         ws_.set_option(websocket::stream_base::decorator(
             [](websocket::request_type &req) {
                 req.set(beast::http::field::user_agent, std::string(BOOST_BEAST_VERSION_STRING) + " pop-wsclient");
-            }
-        ));
+            }));
     }
 
-    void WsClient::set_on_message(MessageHandler h) { on_message_ = std::move(h); }
+    void WsClient::set_on_raw_message(RawMessageHandler h) {
+        on_raw_message_ = std::move(h);
+    }
+
     void WsClient::set_on_close(CloseHandler h) { on_close_ = std::move(h); }
 
     void WsClient::set_on_open(OpenHandler h) {
         on_open_ = std::move(h);
     }
 
-    void WsClient::send_text(const std::string& text) {
+    void WsClient::send_text(const std::string &text) {
         auto self = shared_from_this();
 
         ws_.async_write(
@@ -53,10 +55,8 @@ namespace md {
                         self->on_close_();
                     }
                 }
-            }
-        );
+            });
     }
-
 
     void WsClient::connect(const std::string &host,
                            const std::string &port,
@@ -66,10 +66,10 @@ namespace md {
         target_ = target;
 
         /// kick off the async chain
-        do_resolve_(host, port, target);
+        do_resolve_(host, port);
     }
 
-    void WsClient::do_resolve_(const std::string& host, const std::string& port, const std::string& target) {
+    void WsClient::do_resolve_(const std::string &host, const std::string &port) {
         auto self = shared_from_this();
         resolver_.async_resolve(
             host,
@@ -77,15 +77,15 @@ namespace md {
             [self](const beast::error_code &ec, const tcp::resolver::results_type &results) {
                 if (ec) {
                     std::cerr << "[WsClient] resolve error: " << ec.message() << "\n";
-                    if (self->on_close_) self->on_close_();
+                    if (self->on_close_)
+                        self->on_close_();
                     return;
                 }
                 self->do_tcp_connect_(results);
-            }
-        );
+            });
     }
 
-    void WsClient::do_tcp_connect_(const tcp::resolver::results_type& results) {
+    void WsClient::do_tcp_connect_(const tcp::resolver::results_type &results) {
         auto self = shared_from_this();
 
         // function async_connect for a range of endpoints
@@ -95,7 +95,8 @@ namespace md {
             [self](const boost::system::error_code &ec, const tcp::endpoint &) {
                 if (ec) {
                     std::cerr << "[WsClient] tcp connect error: " << ec.message() << "\n";
-                    if (self->on_close_) self->on_close_();
+                    if (self->on_close_)
+                        self->on_close_();
                     return;
                 }
 
@@ -107,13 +108,13 @@ namespace md {
                         boost::asio::error::get_ssl_category()
                     };
                     std::cerr << "[WsClient] SNI error: " << sni_ec.message() << "\n";
-                    if (self->on_close_) self->on_close_();
+                    if (self->on_close_)
+                        self->on_close_();
                     return;
                 }
 
                 self->do_tls_handshake_();
-            }
-        );
+            });
     }
 
     void WsClient::do_tls_handshake_() {
@@ -124,12 +125,12 @@ namespace md {
                                              if (ec) {
                                                  std::cerr << "[WsClient] TLS handshake error: " << ec.message() <<
                                                          "\n";
-                                                 if (self->on_close_) self->on_close_();
+                                                 if (self->on_close_)
+                                                     self->on_close_();
                                                  return;
                                              }
                                              self->do_ws_handshake_();
-                                         }
-        );
+                                         });
     }
 
     void WsClient::do_ws_handshake_() {
@@ -140,11 +141,12 @@ namespace md {
                             [self](const beast::error_code &ec) {
                                 if (ec) {
                                     std::cerr << "[WsClient] WS handshake error: " << ec.message() << "\n";
-                                    if (self->on_close_) self->on_close_();
+                                    if (self->on_close_)
+                                        self->on_close_();
                                     return;
                                 }
 
-                                // Text mode: Binance typically sends JSON text frames
+                                // Text mode: Binance typically sends JSON frames
                                 self->ws_.text(true);
 
                                 // notify "open"
@@ -154,41 +156,35 @@ namespace md {
 
                                 // start reading frames
                                 self->do_read_();
-                            }
-        );
+                            });
     }
 
     void WsClient::do_read_() {
         auto self = shared_from_this();
 
-        ws_.async_read(
-            buffer_,
-            [self](const beast::error_code &ec, std::size_t bytes_transferred) {
-                (void) bytes_transferred;
+        ws_.async_read(buffer_,
+                       [self](const beast::error_code &ec, std::size_t bytes_transferred) {
+                           if (ec) {
+                               if (ec == websocket::error::closed) {
+                                   std::cerr << "[WsClient] closed\n";
+                               } else {
+                                   std::cerr << "[WsClient] read error: " << ec.message() << "\n";
+                               }
+                               if (self->on_close_) self->on_close_();
+                               return;
+                           }
 
-                if (ec) {
-                    if (ec == websocket::error::closed) {
-                        // peer closed normally
-                        if (self->on_close_) self->on_close_();
-                        return;
-                    }
-                    std::cerr << "[WsClient] read error: " << ec.message() << "\n";
-                    if (self->on_close_) self->on_close_();
-                    return;
-                }
+                           // Correct payload extraction
+                           std::string msg = beast::buffers_to_string(self->buffer_.data());
+                           // msg.size() should equal bytes_transferred
 
-                // convert buffer to string (do not use in very hot paths without pooling)
-                const std::string msg = beast::buffers_to_string(self->buffer_.data());
-                self->buffer_.consume(self->buffer_.size()); // clear
+                           if (self->on_raw_message_) {
+                               self->on_raw_message_(msg.data(), msg.size());
+                           }
 
-                if (self->on_message_) {
-                    self->on_message_(msg);
-                }
-
-                // loop
-                self->do_read_();
-            }
-        );
+                           self->buffer_.consume(self->buffer_.size());
+                           self->do_read_();
+                       });
     }
 
     void WsClient::close() {

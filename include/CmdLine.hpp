@@ -1,6 +1,6 @@
 #pragma once
 
-#include "abstract/feed_handler.hpp"
+#include "abstract/FeedHandler.hpp"
 
 #include <boost/program_options.hpp>
 #include <string>
@@ -11,8 +11,7 @@ struct CmdOptions {
     std::string venue; // required
     std::string base; // --base BTC
     std::string quote; // --quote USDT
-    std::string channel; // required-ish, with default "depth"
-    std::optional<int> depthLevel; // only meaningful for depth channels
+    std::optional<int> depthLevel;
     std::optional<std::string> ws_host; // override or std::nullopt
     std::optional<std::string> ws_port; // override or std::nullopt
     std::optional<std::string> ws_path; // override or std::nullopt
@@ -20,17 +19,17 @@ struct CmdOptions {
     std::optional<std::string> rest_port; // override or std::nullopt
     std::optional<std::string> rest_path; // override or std::nullopt
 
+    // Debug flags
+    bool debug{false};
+    bool debug_raw{false};
+    int debug_every{200};
+    int debug_raw_max{512};
+    int debug_top{3};
+    bool debug_checksum{true};
+    bool debug_seq{true};
+
     bool show_help{false};
 };
-
-inline md::StreamKind parse_stream_kind(const std::string &s_raw) {
-    std::string s = s_raw;
-    std::ranges::transform(s, s.begin(), ::tolower);
-
-    if (s == "incremental") return md::StreamKind::INCREMENTAL;
-    if (s == "depth") return md::StreamKind::DEPTH;
-    return md::StreamKind::UNKNOWN;
-}
 
 inline md::VenueId parse_venue(const std::string &v_raw) {
     std::string v = v_raw;
@@ -66,10 +65,8 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
              "Base asset, e.g. BTC")
             ("quote", po::value<std::string>()->required(),
              "Quote asset, e.g. USDT")
-            ("channel,c", po::value<std::string>()->default_value("depth"),
-             "Stream type: incremental, depth")
-            ("depthLevel,dl", po::value<int>(),
-             "Orderbook depth; required/used if channel is depth")
+            ("depthLevel,dl", po::value<int>()->default_value(400),
+             "Orderbook depth; required or defaults")
             ("ws_host", po::value<std::string>(),
              "Optional WebSocket host override")
             ("ws_port", po::value<std::string>(),
@@ -81,7 +78,21 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
             ("rest_port", po::value<std::string>(),
              "Optional REST port override")
             ("rest_path", po::value<std::string>(),
-             "Optional REST path override");
+             "Optional REST path override")
+            ("debug", po::bool_switch()->default_value(false),
+             "Enable debug logging (rate-limited)")
+            ("debug_raw", po::bool_switch()->default_value(false),
+             "Print truncated raw WS messages on debug logs")
+            ("debug_every", po::value<int>()->default_value(200),
+             "Debug: print 1 message for every N parsed messages (>=1)")
+            ("debug_raw_max", po::value<int>()->default_value(512),
+             "Debug: max chars of raw msg to print")
+            ("debug_top", po::value<int>()->default_value(3),
+             "Debug: print top N levels for snapshot/update")
+            ("debug_no_checksum", po::bool_switch()->default_value(false),
+             "Debug: do NOT print checksum fields")
+            ("debug_no_seq", po::bool_switch()->default_value(false),
+             "Debug: do NOT print seq/prev fields");
 
     po::variables_map vm;
     try {
@@ -90,8 +101,10 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
         if (vm.count("help")) {
             std::cout << "Usage: " << argv[0]
                     << " --venue VENUE --base BTC --quote USDT "
-                    "[--channel incremental|depth] "
-                    "[--depthLevel N] [--host HOST] [--port PORT] [--path PATH]\n\n";
+                    << "[--depthLevel N] "
+                    << "[--ws_host HOST] [--ws_port PORT] [--ws_path PATH] "
+                    << "[--rest_host HOST] [--rest_port PORT] [--rest_path PATH] "
+                    << "[--debug --debug_raw --debug_every N --debug_top N]\n\n";
             std::cout << desc << "\n";
             out.show_help = true;
             return true;
@@ -108,14 +121,25 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
     out.venue = vm["venue"].as<std::string>();
     out.base = vm["base"].as<std::string>();
     out.quote = vm["quote"].as<std::string>();
-    out.channel = vm["channel"].as<std::string>();
-    if (vm.contains("depthLevel")) out.depthLevel = vm["depthLevel"].as<int>();
+    out.depthLevel = vm["depthLevel"].as<int>();
     if (vm.contains("ws_host")) out.ws_host = vm["ws_host"].as<std::string>();
     if (vm.contains("ws_port")) out.ws_port = vm["ws_port"].as<std::string>();
     if (vm.contains("ws_path")) out.ws_path = vm["ws_path"].as<std::string>();
     if (vm.contains("rest_host")) out.rest_host = vm["rest_host"].as<std::string>();
     if (vm.contains("rest_port")) out.rest_port = vm["rest_port"].as<std::string>();
     if (vm.contains("rest_path")) out.rest_path = vm["rest_path"].as<std::string>();
+
+    /// DEBUG
+    out.debug = vm["debug"].as<bool>();
+    out.debug_raw = vm["debug_raw"].as<bool>();
+    out.debug_every = std::max(1, vm["debug_every"].as<int>());
+    out.debug_raw_max = std::max(0, vm["debug_raw_max"].as<int>());
+    out.debug_top = std::max(0, vm["debug_top"].as<int>());
+
+    const bool no_checksum = vm["debug_no_checksum"].as<bool>();
+    const bool no_seq = vm["debug_no_seq"].as<bool>();
+    out.debug_checksum = !no_checksum;
+    out.debug_seq = !no_seq;
 
     return true;
 }

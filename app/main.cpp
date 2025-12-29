@@ -1,114 +1,176 @@
-#include "cmdline.hpp"              // CmdOptions, parse_cmdline, parse_stream_kind, parse_venue
-#include "abstract/feed_handler.hpp"// FeedHandlerConfig, Status, StreamKind, VenueId
-#include "venue_util.hpp"           // md::venue::createFeedHandler, md::to_string(VenueId)
-
+// --- include Boost first so your macro can't corrupt Boost headers ---
 #include <boost/asio/io_context.hpp>
-#include <iostream>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/ssl.hpp>
 
-int main(int argc, char** argv) {
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+#include <boost/beast/http/fields.hpp>     // IMPORTANT: this is where your error originates
+#include <boost/beast/websocket.hpp>
+
+// Your other headers that may include Boost should also be above the macro:
+#include "CmdLine.hpp"
+#include "abstract/FeedHandler.hpp"
+#include "../include/utils/VenueUtils.hpp"
+
+// / ---- DEBUG ONLY (main.cpp) ----
+// Allows main.cpp to peek into GenericFeedHandler internals for console debugging.
+// Remove when you add a proper debug interface.
+#define private public
+#include "md/GenericFeedHandler.hpp"
+#undef private
+// ---- END DEBUG ONLY ----
+
+// Now the rest of your includes (standard library etc.)
+#include <chrono>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <string>
+#include "utils/DebugConfigUtils.hpp"
+
+static void print_book_bbo(const md::OrderBook &book) {
+    // Adjust this if your OrderBook API differs.
+    const auto bb = book.best_bid();
+    const auto ba = book.best_ask();
+
+    std::cout << "[BBO] bid=" << bb.priceTick << " qty=" << bb.quantityLot
+            << " | ask=" << ba.priceTick << " qty=" << ba.quantityLot << "\n";
+}
+
+static std::string make_binance_ws_topic(const CmdOptions &opt,
+                                         const md::FeedHandlerConfig &cfg,
+                                         const std::string &ws_symbol_only_lower) {
+    // Your BinanceAdapter does: "/ws/" + cfg.symbol
+    // So cfg.symbol must be: "btcusdt@depth@100ms" (or similar)
+    //
+    // If user passes ws_path override, we don't need symbol, but we still set it for logging.
+
+    // For now we support:
+    //   --channel depth        => <sym>@depth@100ms
+    //   --channel incremental  => also use depthUpdate stream; keep same
+    //
+    // You can later map to different channels (trade/bookTicker/etc).
+    (void) cfg;
+
+    return ws_symbol_only_lower + "@depth@100ms";
+}
+
+int main(int argc, char **argv) {
     CmdOptions options;
     if (!parse_cmdline(argc, argv, options)) {
-        // parse_cmdline already printed error/help on failure
         return 1;
     }
-
     if (options.show_help) {
         return 0;
     }
 
     // ---------------------------------------------------------------------
-    // 1) Validate venue
+    // 1) Validate venue + stream kind
     // ---------------------------------------------------------------------
     md::VenueId venue = parse_venue(options.venue);
     if (venue == md::VenueId::UNKNOWN) {
         std::cerr << "Error: unknown venue '" << options.venue
-                  << "'. Expected one of: binance, okx, bybit, bitget, kucoin.\n";
+                << "'. Expected one of: binance, okx, bybit, bitget, kucoin.\n";
         return 1;
     }
 
     // ---------------------------------------------------------------------
-    // 2) Validate stream kind / channel
+    // 2) Build config
     // ---------------------------------------------------------------------
-    md::StreamKind kind = parse_stream_kind(options.channel);
-    if (kind == md::StreamKind::UNKNOWN) {
-        std::cerr << "Error: unknown stream type '" << options.channel
-                  << "'. Expected one of: incremental, depth.\n";
-        return 1;
-    }
+    md::FeedHandlerConfig cfg{};
+    cfg.venue_name = venue;
+    cfg.base_ccy = options.base;
+    cfg.quote_ccy = options.quote;
+
+    // depthLevel: your options_description sets default_value(400),
+    // so options.depthLevel should always be set in practice,
+    // but keep a safe fallback.
+    cfg.depthLevel = options.depthLevel.value_or(400);
+
+    cfg.ws_host = options.ws_host.value_or("");
+    cfg.ws_port = options.ws_port.value_or("");
+    cfg.ws_path = options.ws_path.value_or("");
+    cfg.rest_host = options.rest_host.value_or("");
+    cfg.rest_port = options.rest_port.value_or("");
+    cfg.rest_path = options.rest_path.value_or("");
+
+    /// DEBUG
+    md::debug::enabled.store(options.debug, std::memory_order_relaxed);
+    md::debug::raw.store(options.debug_raw, std::memory_order_relaxed);
+    md::debug::every.store(options.debug_every, std::memory_order_relaxed);
+    md::debug::raw_max.store(options.debug_raw_max, std::memory_order_relaxed);
+    md::debug::top_levels.store(options.debug_top, std::memory_order_relaxed);
+    md::debug::show_checksum.store(options.debug_checksum, std::memory_order_relaxed);
+    md::debug::show_seq.store(options.debug_seq, std::memory_order_relaxed);
 
     // ---------------------------------------------------------------------
-    // 3) Derive effective depthLevel
+    // 3) Symbol mapping
     // ---------------------------------------------------------------------
-    int depth_level = 0;
+    // WS symbol mapping (BINANCE => "btcusdt")
+    const std::string ws_sym = md::venue::map_ws_symbol(cfg.venue_name, cfg.base_ccy, cfg.quote_ccy);
+    const std::string rest_sym = md::venue::map_rest_symbol(cfg.venue_name, cfg.base_ccy, cfg.quote_ccy);
 
-    if (kind == md::StreamKind::DEPTH) {
-        // For depth streams, depthLevel must be provided and > 0
-        if (!options.depthLevel.has_value()) {
-            std::cerr << "Error: --depthLevel is required when channel=depth\n";
-            return 1;
-        }
-
-        depth_level = *options.depthLevel;
-        if (depth_level <= 0) {
-            std::cerr << "Error: --depthLevel must be > 0 (got "
-                      << depth_level << ")\n";
-            return 1;
+    // For your BinanceAdapter, cfg.symbol must be the full topic token
+    // unless you override ws_path.
+    if (cfg.ws_path.empty()) {
+        if (cfg.venue_name == md::VenueId::BINANCE) {
+            cfg.symbol = make_binance_ws_topic(options, cfg, ws_sym);
+        } else {
+            // for other venues you’ll likely use ws_sym directly or build a venue-specific topic
+            cfg.symbol = ws_sym;
         }
     } else {
-        // For incremental streams depth level is not used; keep 0
-        depth_level = 0;
+        // ws_path override means adapter target will be forced anyway,
+        // but cfg.symbol can still be useful for logs/debug
+        cfg.symbol = (cfg.venue_name == md::VenueId::BINANCE) ? make_binance_ws_topic(options, cfg, ws_sym) : ws_sym;
     }
 
     // ---------------------------------------------------------------------
-    // 4) Build FeedHandlerConfig from CLI options
+    // 4) Debug output
     // ---------------------------------------------------------------------
-    md::FeedHandlerConfig cfg;
-    cfg.venue_name  = venue;                        // enum VenueId
-    cfg.symbol      = md::venue::map_ws_symbol(venue, options.base, options.quote);               // e.g. "BTC-USDT"
-    cfg.stream_kind = kind;
-    cfg.depthLevel  = depth_level;
-    cfg.ws_host     = options.ws_host.value_or("");    
-    cfg.ws_port     = options.ws_port.value_or("");    
-    cfg.ws_path     = options.ws_path.value_or("");    
-    cfg.rest_host   = options.rest_host.value_or("");    
-    cfg.rest_port   = options.rest_port.value_or("");    
-    cfg.rest_path   = options.rest_path.value_or("");    
-
-    // Optional debug log
-    std::cout << "[POP] Starting feed\n"
-              << "  venue      = " << md::to_string(cfg.venue_name) << "\n"
-              << "  symbol     = " << cfg.symbol << "\n"
-              << "  channel    = " << options.channel
-              << " (StreamKind=" << md::to_string(cfg.stream_kind) << ")\n"
-              << "  depthLevel = " << cfg.depthLevel << "\n"
-              << "  ws_host       = " << (cfg.ws_host.empty() ? "<default>" : cfg.ws_host) << "\n"
-              << "  ws_port       = " << (cfg.ws_port.empty() ? "<default>" : cfg.ws_port) << "\n"
-              << "  ws_path       = " << (cfg.ws_path.empty() ? "<default>" : cfg.ws_path) << "\n"
-              << "  rest_host       = " << (cfg.rest_host.empty() ? "<default>" : cfg.rest_host) << "\n"
-              << "  rest_port       = " << (cfg.rest_port.empty() ? "<default>" : cfg.rest_port) << "\n"
-              << "  rest_path       = " << (cfg.rest_path.empty() ? "<default>" : cfg.rest_path) << "\n";
+    std::cerr << "[POP] Starting feed\n"
+            << "  venue      = " << options.venue << "\n"
+            << "  base/quote = " << cfg.base_ccy << "/" << cfg.quote_ccy << "\n"
+            << "  depthLevel = " << cfg.depthLevel << "\n"
+            << "  ws_sym     = " << ws_sym << "\n"
+            << "  rest_sym   = " << rest_sym << "\n"
+            << "  cfg.symbol = " << cfg.symbol << "\n"
+            << "  ws_host    = " << (cfg.ws_host.empty() ? "<default>" : cfg.ws_host) << "\n"
+            << "  ws_port    = " << (cfg.ws_port.empty() ? "<default>" : cfg.ws_port) << "\n"
+            << "  ws_path    = " << (cfg.ws_path.empty() ? "<default>" : cfg.ws_path) << "\n"
+            << "  rest_host  = " << (cfg.rest_host.empty() ? "<default>" : cfg.rest_host) << "\n"
+            << "  rest_port  = " << (cfg.rest_port.empty() ? "<default>" : cfg.rest_port) << "\n"
+            << "  rest_path  = " << (cfg.rest_path.empty() ? "<default>" : cfg.rest_path) << "\n";
 
     // ---------------------------------------------------------------------
-    // 5) Event loop + feed handler
+    // 5) Run
     // ---------------------------------------------------------------------
     boost::asio::io_context ioc;
 
-    auto fh = md::venue::createFeedHandler(ioc, cfg);
-    if (!fh) {
-        std::cerr << "Failed to create feed handler for venue="
-                  << md::to_string(cfg.venue_name) << "\n";
-        return 1;
-    }
+    auto h = std::make_unique<md::GenericFeedHandler>(ioc);
 
-    if (fh->init(cfg) != md::Status::OK) {
-        std::cerr << "init() failed\n";
-        return 1;
-    }
+    auto st = h->init(cfg);
+    std::cerr << "[MAIN] init = " << (st == md::Status::OK ? "OK" : "ERROR") << "\n";
+    if (st != md::Status::OK) return 1;
 
-    if (fh->start() != md::Status::OK) {
-        std::cerr << "start() failed\n";
-        return 1;
-    }
+    st = h->start();
+    std::cerr << "[MAIN] start = " << (st == md::Status::OK ? "OK" : "ERROR") << "\n";
+    if (st != md::Status::OK) return 2;
+
+    // Heartbeat (optional)
+    auto t = std::make_shared<boost::asio::steady_timer>(ioc);
+    std::function<void()> tick;
+    tick = [t, &tick]() {
+        t->expires_after(std::chrono::seconds(1));
+        t->async_wait([t, &tick](const boost::system::error_code &ec) {
+            if (!ec) {
+                std::cerr << "[MAIN] heartbeat\n";
+                tick();
+            }
+        });
+    };
+    tick();
 
     ioc.run();
     return 0;

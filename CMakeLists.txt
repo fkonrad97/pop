@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.28)
 
 # Use Boost CONFIG packages (CMP0167).
-if(POLICY CMP0167)
+if (POLICY CMP0167)
     cmake_policy(SET CMP0167 NEW)
-endif()
+endif ()
 
 project(pop LANGUAGES CXX)
 
@@ -48,26 +48,84 @@ FetchContent_MakeAvailable(simdjson)
 # -----------------------------------------------------------------------------
 # 3) Core library
 # -----------------------------------------------------------------------------
+# md
+file(GLOB CORE_GENERIC_FEED_HANDLER
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/src/md/*.cpp"
+        "${CMAKE_SOURCE_DIR}/src/md/adapters/*.cpp"
+)
+
+# Connection handlers
+file(GLOB CORE_CLIENT_HANDLERS
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/src/client_connection_handlers/*.cpp"
+)
+
+# Orderbook
+file(GLOB CORE_ORDERBOOK
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/src/orderbook/*.cpp"
+)
+
 add_library(pop_core STATIC
-        src/feed_handlers/binance_feed_handler.cpp
-        src/feed_handlers/okx_feed_handler.cpp
-        src/feed_handlers/bybit_feed_handler.cpp
-        src/feed_handlers/bitget_feed_handler.cpp
-        src/feed_handlers/kucoin_feed_handler.cpp
-        src/client_connection_handlers/rest_client.cpp
-        src/client_connection_handlers/ws_client.cpp
+        ${CORE_CLIENT_HANDLERS}
+        ${CORE_GENERIC_FEED_HANDLER}
+        ${CORE_ORDERBOOK}
 )
 
 # public headers live in include/
 target_include_directories(pop_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
+# -----------------------------------------------------------------------------
+# 3) POP PUBLIC HEADERS
 # Publish all headers during active dev; switch to explicit list when stable.
-file(GLOB_RECURSE POP_PUBLIC_HEADERS
+# -----------------------------------------------------------------------------
+# md
+file(GLOB CORE_GENERIC_FEED_HANDLER_HEADER
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/include/md/*.hpp"
+)
+
+# Feed handlers
+file(GLOB CORE_ABSTRACT_HEADERS
         CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/include/abstract/*.hpp"
-        "${CMAKE_SOURCE_DIR}/include/stream_parser/*.hpp"
+)
+
+# Connection handlers
+file(GLOB CORE_CLIENT_CONNECTION_HANDLER_HEADERS
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/include/client_connection_handlers/*.hpp"
+)
+
+# Orderbook
+file(GLOB CORE_ORDERBOOK_HEADERS
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/include/orderbook/*.hpp"
+)
+
+# Utilities
+file(GLOB CORE_INCLUDE_HEADERS
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/include/utils/*.hpp"
+)
+
+# Orderbook
+file(GLOB CORE_INCLUDE_HEADERS
+        CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/include/*.hpp"
 )
+
+# All includes
+file(GLOB_RECURSE POP_PUBLIC_HEADERS
+        CONFIGURE_DEPENDS
+        ${CORE_ABSTRACT_HEADERS}
+        ${CORE_CLIENT_CONNECTION_HANDLER_HEADERS}
+        ${CORE_GENERIC_FEED_HANDLER_HEADER}
+        ${CORE_ORDERBOOK_HEADERS}
+        ${CORE_INCLUDE_HEADERS}
+)
+
 target_sources(pop_core
         PUBLIC
         FILE_SET public_headers
@@ -95,9 +153,9 @@ target_link_libraries(pop_core
 # Warnings
 if (MSVC)
     target_compile_options(pop_core PRIVATE /W4 /permissive-)
-else()
+else ()
     target_compile_options(pop_core PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+endif ()
 
 # -----------------------------------------------------------------------------
 # 4) App

@@ -10,7 +10,6 @@
 #include <string>
 
 namespace md {
-
     /**
      * @class RestClient
      *
@@ -34,7 +33,7 @@ namespace md {
     class RestClient : public std::enable_shared_from_this<RestClient> {
     public:
         /// Completion signature: (ec, body). On error, body is usually empty.
-        using ResponseHandler = std::function<void(boost::system::error_code, const std::string&)>;
+        using ResponseHandler = std::function<void(boost::system::error_code, const std::string &)>;
 
         /**
          * @brief Create a REST client bound to the given io_context.
@@ -73,10 +72,10 @@ namespace md {
                        ResponseHandler cb);
 
         void async_post(std::string host,
-                std::string target,
-                std::string port,
-                std::string body,
-                ResponseHandler cb);
+                        std::string target,
+                        std::string port,
+                        std::string body,
+                        ResponseHandler cb);
 
     private:
         // =====================
@@ -95,7 +94,7 @@ namespace md {
          * Input:  resolver::results_type
          * Output: established TCP connection → next: do_tls_handshake_()
          */
-        void do_tcp_connect_(const boost::asio::ip::tcp::resolver::results_type& results);
+        void do_tcp_connect_(const boost::asio::ip::tcp::resolver::results_type &results);
 
         /**
          * @brief Perform the client-side TLS handshake over the connected TCP socket.
@@ -157,7 +156,7 @@ namespace md {
          *
          * We do plain HTTP over this secure channel using Beast algorithms.
          */
-        boost::beast::ssl_stream<boost::asio::ip::tcp::socket> stream_{ioc_, ssl_ctx_};
+        std::unique_ptr<boost::beast::ssl_stream<boost::asio::ip::tcp::socket> > stream_;
 
         /// Temporary buffer used by Beast for reads (HTTP response parsing).
         boost::beast::flat_buffer buffer_;
@@ -169,15 +168,25 @@ namespace md {
         boost::beast::http::response<boost::beast::http::string_body> res_;
 
         /// Request parameters captured for the chain.
-        std::string host_;    ///< e.g., "api.binance.com"
-        std::string target_;  ///< e.g., "/api/v3/time"
-        std::string port_;    ///< e.g., "443"
+        std::string host_; ///< e.g., "api.binance.com"
+        std::string target_; ///< e.g., "/api/v3/time"
+        std::string port_; ///< e.g., "443"
 
         /// User-provided completion callback.
         ResponseHandler cb_;
 
         /// Prevent double shutdown/callback on racey error paths.
         bool shutting_down_ = false;
-    };
 
+        std::atomic_bool in_flight_{false};
+
+        boost::system::error_code final_ec_;
+        std::string response_body_;
+
+        void fail_(boost::system::error_code ec);
+
+        void finish_();
+
+        void reset_per_request_state_();
+    };
 } // namespace md
