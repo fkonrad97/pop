@@ -4,9 +4,8 @@
 
 namespace md {
     GenericFeedHandler::GenericFeedHandler(boost::asio::io_context &ioc): ioc_(ioc),
-                                                                          ws_(std::make_shared<WsClient>(ioc)) {
-        rest_ = RestClient::create(ioc_); // factory, not make_shared
-
+                                                                          ws_(md::WsClient::create(ioc)),
+                                                                          rest_(md::RestClient::create(ioc)) {
         rest_->set_keep_alive(true); // strongly recommended for snapshots
         rest_->set_logger([](std::string_view s) {
             // plug into your logging system; std::cerr is fine for now
@@ -249,8 +248,6 @@ namespace md {
             const bool isSnap = std::visit([&](auto const &a) noexcept {
                 return a.isSnapshot(msg) && a.parseWsSnapshot(msg, snap);
             }, adapter_);
-
-            std::cout << "[GenericFeedHandler] WSMessage received: " << msg << std::endl;
 
             if (isSnap) {
                 controller_->onSnapshot(snap, OrderBookController::BaselineKind::WsAuthoritative);
