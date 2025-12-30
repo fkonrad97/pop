@@ -3,6 +3,9 @@
 #include <atomic>
 #include <cstddef>
 #include <iostream>
+#include <vector>
+#include <string_view>
+#include "orderbook/OrderBook.hpp"
 
 namespace md::debug {
     inline std::atomic<bool> enabled{false}; // master switch

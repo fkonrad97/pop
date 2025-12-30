@@ -4,8 +4,8 @@
 
 namespace md {
     GenericFeedHandler::GenericFeedHandler(boost::asio::io_context &ioc): ioc_(ioc),
-                                                                          ws_(md::WsClient::create(ioc)),
-                                                                          rest_(md::RestClient::create(ioc)) {
+                                                                          ws_(WsClient::create(ioc)),
+                                                                          rest_(RestClient::create(ioc)) {
         rest_->set_keep_alive(true); // strongly recommended for snapshots
         rest_->set_logger([](std::string_view s) {
             // plug into your logging system; std::cerr is fine for now
@@ -74,6 +74,12 @@ namespace md {
         /// Wire WS callback once
         ws_->set_on_open([this] { onWSOpen(); });
         ws_->set_on_raw_message([this](const char *data, std::size_t len) { onWSMessage(data, len); });
+        ws_->set_on_close([this] {
+            if (!running_.load(std::memory_order_acquire)) return;
+            // Force a deterministic resync path
+            restartSync();
+        });
+
 
         connect_id_ = makeConnectId();
 
@@ -109,6 +115,11 @@ namespace md {
      * - Generic WS connect uses resolved endpoint
      */
     void GenericFeedHandler::connectWS() {
+        if (rt_.ws_ping_interval_ms > 0) {
+            ws_->set_idle_ping(std::chrono::milliseconds(rt_.ws_ping_interval_ms));
+        } else {
+            ws_->set_idle_ping(std::chrono::milliseconds(0));
+        }
         ws_->connect(rt_.ws.host, rt_.ws.port, rt_.ws.target);
     }
 
@@ -176,8 +187,6 @@ namespace md {
         const bool ok = std::visit([&](auto const &a) noexcept {
             return a.parseSnapshot(body, snap);
         }, adapter_);
-
-        std::cout << body << std::endl;
 
         if (!ok) {
             restartSync();
@@ -347,14 +356,15 @@ namespace md {
         if (rt_.caps.sync_mode == SyncMode::RestAnchored) {
             state_ = SyncState::WAIT_REST_SNAPSHOT;
             requestSnapshot();
-        } else {
-            state_ = SyncState::WAIT_WS_SNAPSHOT;
-
-            // Minimal safe behavior: wait for a fresh WS snapshot.
-            // In practice many venues require a resubscribe/reconnect to trigger a new snapshot.
-            // You can upgrade later to:
-            // ws_->close(); connectWS();
+            return;
         }
+
+        // WsAuthoritative: force reconnect to obtain a fresh snapshot baseline
+        state_ = SyncState::WAIT_WS_SNAPSHOT;
+
+        connect_id_ = makeConnectId(); // refresh bootstrap/connect correlation id
+        ws_->close(); // triggers on_close (or close directly)
+        connectWS(); // on open you will subscribe again, then wait snapshot
     }
 
     void GenericFeedHandler::bootstrapWS() {

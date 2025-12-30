@@ -167,8 +167,8 @@ namespace md {
          * - Depth and vector sizes are preserved: bids_.size() == asks_.size() == depth_.
          */
         void clear() noexcept {
-            std::fill(bids.begin(), bids.end(), Level{});
-            std::fill(asks.begin(), asks.end(), Level{});
+            bids.clear();
+            asks.clear();
         }
 
         /**

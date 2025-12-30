@@ -91,7 +91,8 @@ namespace md {
 
         update.first_seq = j["U"].get<std::uint64_t>();
         update.last_seq = j["u"].get<std::uint64_t>();
-        update.prev_last = j.value("pu", update.last_seq - 1);
+        const auto fallback_prev = (update.last_seq > 0) ? (update.last_seq - 1) : 0;
+        update.prev_last = j.value("pu", fallback_prev);
 
         const auto &b = j["b"];
         const auto &a = j["a"];
