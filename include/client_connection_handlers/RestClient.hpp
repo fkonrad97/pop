@@ -50,6 +50,21 @@ namespace md {
                         std::string body,
                         ResponseHandler cb);
 
+        int last_http_status() const noexcept { return last_http_status_; }
+
+        void set_timeout(std::chrono::milliseconds t) { timeout_ = t; }
+        void set_shutdown_timeout(std::chrono::milliseconds t) { shutdown_timeout_ = t; }
+
+        /// expose limits if you want to tune per venue/depth
+        void set_limits(std::size_t max_header_bytes, std::size_t max_body_bytes) {
+            max_header_bytes_ = max_header_bytes;
+            max_body_bytes_ = max_body_bytes;
+        }
+
+        /// Cancel any in-flight request and complete callback with operation_aborted.
+        /// Safe to call from any thread.
+        void cancel();
+
     private:
         explicit RestClient(boost::asio::io_context &ioc);
 

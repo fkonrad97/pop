@@ -12,6 +12,8 @@ namespace md {
             // plug into your logging system; std::cerr is fine for now
             std::cerr << s << "\n";
         });
+        rest_->set_timeout(std::chrono::milliseconds(2000));
+        rest_->set_shutdown_timeout(std::chrono::milliseconds(150));
     }
 
     std::string GenericFeedHandler::makeConnectId() const {
@@ -87,11 +89,19 @@ namespace md {
     }
 
     Status GenericFeedHandler::stop() {
-        if (!running_.exchange(false)) return Status::ERROR;
+        running_.store(false, std::memory_order_release);
+
+        if (rest_) {
+            rest_->cancel();
+        }
+        if (ws_) {
+            ws_->close(); // or whatever your WS client uses
+        }
 
         state_ = SyncState::DISCONNECTED;
         buffer_.clear();
         controller_->resetBook();
+
         return Status::OK;
     }
 
@@ -127,21 +137,38 @@ namespace md {
      * - Async GET snapshot
      */
     void GenericFeedHandler::requestSnapshot() {
-        if (!running_.load()) return;
+        state_ = SyncState::WAIT_REST_SNAPSHOT;
 
         rest_->async_get(rt_.rest.host, rt_.rest.port, rt_.restSnapshotTarget,
-                         [this](boost::system::error_code ec, const std::string &body) {
+                         [this](boost::system::error_code ec, std::string body) {
+                             if (!running_.load(std::memory_order_acquire)) return;
+
                              if (ec) {
-                                 std::cerr << "[REST][GET][ERR] " << ec.message() << "\n";
+                                 // network / TLS / timeout errors
                                  restartSync();
                                  return;
                              }
 
-                             std::cout << "requestSnapshot() ::: " << body << "\n";
+                             const int status = rest_->last_http_status();
+
+                             if (status == 429 || status == 418) {
+                                 // rate-limited / temporary ban -> backoff (not immediate restart spam)
+                                 // e.g. schedule retry in 500ms
+                                 restartSync();
+                                 return;
+                             }
+
+                             if (status < 200 || status >= 300) {
+                                 // 4xx/5xx -> handle separately if you want
+                                 restartSync();
+                                 return;
+                             }
 
                              onSnapshotResponse(body);
-                         });
+                         }
+        );
     }
+
 
     void GenericFeedHandler::onSnapshotResponse(std::string_view body) {
         if (!running_.load()) return;

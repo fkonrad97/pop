@@ -383,7 +383,7 @@ namespace md {
                                            if (ec &&
                                                ec != boost::asio::error::eof &&
                                                ec != boost::asio::ssl::error::stream_truncated) {
-                                               self->logger_("[RESTCLIENT] TLS shutdown error");
+                                               self->emit_log_("[RESTCLIENT] TLS shutdown error");
                                                // Do not override primary request error if it already exists.
                                                if (!self->final_ec_) self->final_ec_ = ec;
                                            }
@@ -443,5 +443,39 @@ namespace md {
 
     void RestClient::cancel_shutdown_deadline_() {
         shutdown_deadline_.cancel();
+    }
+
+    void RestClient::cancel() {
+        auto self = shared_from_this();
+        boost::asio::dispatch(strand_, [self]() {
+            if (!self->in_flight_.load(std::memory_order_acquire)) {
+                return; // nothing to cancel
+            }
+
+            // Prefer to report operation_aborted unless something already failed.
+            if (!self->final_ec_) {
+                self->final_ec_ = make_error_code(boost::system::errc::operation_canceled);
+            }
+
+            // Cancel timers + resolver + socket ops. This will cause pending handlers to abort.
+            self->disarm_deadline_();
+            self->cancel_shutdown_deadline_();
+
+            boost::system::error_code ignored;
+            self->resolver_.cancel();
+            if (self->stream_) {
+                beast::get_lowest_layer(*self->stream_).cancel(ignored);
+            }
+
+            // If TLS isn’t up yet, hard-close and finish immediately.
+            if (!self->tcp_connected_ || !self->tls_handshook_) {
+                self->close_socket_hard_();
+                self->finish_();
+                return;
+            }
+
+            // If TLS is up, attempt orderly shutdown (bounded by shutdown timeout).
+            self->do_tls_shutdown_();
+        });
     }
 } // namespace md
