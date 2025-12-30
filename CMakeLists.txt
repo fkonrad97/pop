@@ -20,7 +20,6 @@ option(POP_BUILD_TESTS "Build unit tests" ON)
 # -----------------------------------------------------------------------------
 # 1) System packages
 # -----------------------------------------------------------------------------
-# NOTE: added 'program_options' here
 find_package(Boost 1.78 CONFIG REQUIRED COMPONENTS headers system program_options)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
@@ -49,81 +48,40 @@ FetchContent_MakeAvailable(simdjson)
 # 3) Core library
 # -----------------------------------------------------------------------------
 # md
-file(GLOB CORE_GENERIC_FEED_HANDLER
+file(GLOB CORE_MD_SOURCES
         CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/src/md/*.cpp"
         "${CMAKE_SOURCE_DIR}/src/md/adapters/*.cpp"
 )
 
 # Connection handlers
-file(GLOB CORE_CLIENT_HANDLERS
+file(GLOB CORE_CLIENT_SOURCES
         CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/src/client_connection_handlers/*.cpp"
 )
 
 # Orderbook
-file(GLOB CORE_ORDERBOOK
+file(GLOB CORE_ORDERBOOK_SOURCES
         CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/src/orderbook/*.cpp"
 )
 
 add_library(pop_core STATIC
-        ${CORE_CLIENT_HANDLERS}
-        ${CORE_GENERIC_FEED_HANDLER}
-        ${CORE_ORDERBOOK}
+        ${CORE_CLIENT_SOURCES}
+        ${CORE_MD_SOURCES}
+        ${CORE_ORDERBOOK_SOURCES}
 )
 
-# public headers live in include/
+# Public headers live in include/
 target_include_directories(pop_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
 # -----------------------------------------------------------------------------
-# 3) POP PUBLIC HEADERS
+# 3b) POP PUBLIC HEADERS (FILE_SET)
 # Publish all headers during active dev; switch to explicit list when stable.
 # -----------------------------------------------------------------------------
-# md
-file(GLOB CORE_GENERIC_FEED_HANDLER_HEADER
-        CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/include/md/*.hpp"
-)
-
-# Feed handlers
-file(GLOB CORE_ABSTRACT_HEADERS
-        CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/include/abstract/*.hpp"
-)
-
-# Connection handlers
-file(GLOB CORE_CLIENT_CONNECTION_HANDLER_HEADERS
-        CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/include/client_connection_handlers/*.hpp"
-)
-
-# Orderbook
-file(GLOB CORE_ORDERBOOK_HEADERS
-        CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/include/orderbook/*.hpp"
-)
-
-# Utilities
-file(GLOB CORE_UTIL_HEADERS
-        CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/include/utils/*.hpp"
-)
-
-# Orderbook
-file(GLOB CORE_INCLUDE_HEADERS
-        CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/include/*.hpp"
-)
-
-# All includes
 file(GLOB_RECURSE POP_PUBLIC_HEADERS
         CONFIGURE_DEPENDS
-        ${CORE_ABSTRACT_HEADERS}
-        ${CORE_CLIENT_CONNECTION_HANDLER_HEADERS}
-        ${CORE_GENERIC_FEED_HANDLER_HEADER}
-        ${CORE_ORDERBOOK_HEADERS}
-        ${CORE_INCLUDE_HEADERS}
+        "${CMAKE_SOURCE_DIR}/include/*.hpp"
 )
 
 target_sources(pop_core
@@ -137,13 +95,12 @@ target_sources(pop_core
 # Modern features
 target_compile_features(pop_core PUBLIC ${_std_feature})
 
-# Link deps
+# Link deps (PUBLIC so they propagate to consumers of pop_core)
 target_link_libraries(pop_core
         PUBLIC
         nlohmann_json::nlohmann_json
         simdjson::simdjson
         Boost::headers
-        PRIVATE
         Boost::system
         OpenSSL::SSL
         OpenSSL::Crypto
@@ -164,11 +121,23 @@ add_executable(pop
         app/main.cpp
 )
 
-# Link the app against core + Boost::program_options
+# Link the app against core + explicitly re-list system libs (robust link line)
 target_link_libraries(pop
         PRIVATE
         pop_core
         Boost::program_options
+        Boost::system
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        Threads::Threads
 )
 
 target_compile_features(pop PRIVATE ${_std_feature})
+
+# -----------------------------------------------------------------------------
+# 5) Tests (optional scaffold)
+# -----------------------------------------------------------------------------
+if (POP_BUILD_TESTS)
+    enable_testing()
+    # add_subdirectory(tests)  # uncomment when you add tests/
+endif ()

@@ -46,7 +46,7 @@ namespace md {
         return j.dump();
     }
 
-    std::string BybitAdapter::restSnapshotTarget(const FeedHandlerConfig &cfg) const {
+    std::string BybitAdapter::restSnapshotTarget(const FeedHandlerConfig &) const {
         return "";
     }
 

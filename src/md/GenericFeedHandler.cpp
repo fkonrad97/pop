@@ -5,7 +5,8 @@
 namespace md {
     GenericFeedHandler::GenericFeedHandler(boost::asio::io_context &ioc): ioc_(ioc),
                                                                           ws_(WsClient::create(ioc)),
-                                                                          rest_(RestClient::create(ioc)) {
+                                                                          rest_(RestClient::create(ioc)),
+                                                                          reconnect_timer_(ioc) {
         rest_->set_keep_alive(true); // strongly recommended for snapshots
         rest_->set_logger([](std::string_view s) {
             // plug into your logging system; std::cerr is fine for now
@@ -76,10 +77,8 @@ namespace md {
         ws_->set_on_raw_message([this](const char *data, std::size_t len) { onWSMessage(data, len); });
         ws_->set_on_close([this] {
             if (!running_.load(std::memory_order_acquire)) return;
-            // Force a deterministic resync path
-            restartSync();
+            onWSClose_();
         });
-
 
         connect_id_ = makeConnectId();
 
@@ -162,9 +161,14 @@ namespace md {
                              const int status = rest_->last_http_status();
 
                              if (status == 429 || status == 418) {
-                                 // rate-limited / temporary ban -> backoff (not immediate restart spam)
-                                 // e.g. schedule retry in 500ms
-                                 restartSync();
+                                 /// Rate-limited / temporary ban -> do NOT hammer.
+                                 /// Simple fixed delay; replace with exponential backoff later.
+                                 reconnect_timer_.expires_after(std::chrono::milliseconds(750));
+                                 reconnect_timer_.async_wait([this](const boost::system::error_code &ec) {
+                                     if (ec) return;
+                                     if (!running_.load()) return;
+                                     requestSnapshot();
+                                 });
                                  return;
                              }
 
@@ -363,8 +367,12 @@ namespace md {
         state_ = SyncState::WAIT_WS_SNAPSHOT;
 
         connect_id_ = makeConnectId(); // refresh bootstrap/connect correlation id
-        ws_->close(); // triggers on_close (or close directly)
-        connectWS(); // on open you will subscribe again, then wait snapshot
+        closing_for_restart_ = true;
+        ws_->close();
+
+        /// Prevent tight reconnect loops; schedule a small backoff reconnect.
+        /// If wants exponential backoff, we can extend this easily.
+        schedule_ws_reconnect_(std::chrono::milliseconds(150));
     }
 
     void GenericFeedHandler::bootstrapWS() {
@@ -411,5 +419,34 @@ namespace md {
                               connectWS();
                           }
         );
+    }
+
+    void GenericFeedHandler::onWSClose_() {
+        // If we initiated the close as part of restartSync(), do NOT re-enter restartSync().
+        if (closing_for_restart_) {
+            closing_for_restart_ = false;
+            return;
+        }
+
+        // Unexpected close (network flap, remote close, etc.)
+        restartSync();
+    }
+
+    void GenericFeedHandler::schedule_ws_reconnect_(std::chrono::milliseconds delay) {
+        // Single-flight scheduler: cancels previous, schedules only latest generation.
+        ++reconnect_gen_;
+        const auto my_gen = reconnect_gen_;
+
+        reconnect_scheduled_ = true;
+        reconnect_timer_.expires_after(delay);
+
+        reconnect_timer_.async_wait([this, my_gen](const boost::system::error_code &ec) {
+            if (ec) return; // canceled
+            if (!running_.load()) return; // stopped
+            if (my_gen != reconnect_gen_) return; // superseded
+
+            reconnect_scheduled_ = false;
+            connectWS();
+        });
     }
 }

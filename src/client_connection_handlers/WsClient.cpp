@@ -51,6 +51,7 @@ namespace md {
                                   self->disarm_connect_deadline_();
 
                                   boost::system::error_code ignored;
+                                  self->resolver_.cancel(); // IMPORTANT: cancel any in-flight resolve
                                   self->ws_.next_layer().shutdown(ignored);
                                   beast::get_lowest_layer(self->ws_).cancel(ignored);
                                   beast::get_lowest_layer(self->ws_).close(ignored);
@@ -102,6 +103,7 @@ namespace md {
             host_, port_,
             boost::asio::bind_executor(strand_,
                                        [self](const beast::error_code &ec, const tcp::resolver::results_type &results) {
+                                           if (self->closing_) return; // prevent late continuation
                                            if (ec) return self->fail_(ec, "resolve");
                                            self->do_tcp_connect_(results);
                                        }
@@ -116,6 +118,7 @@ namespace md {
             beast::get_lowest_layer(ws_), results,
             boost::asio::bind_executor(strand_,
                                        [self](const boost::system::error_code &ec, const tcp::endpoint &) {
+                                           if (self->closing_) return; // prevent late continuation
                                            if (ec) return self->fail_(ec, "tcp_connect");
 
                                            // SNI
@@ -140,6 +143,7 @@ namespace md {
             ssl::stream_base::client,
             boost::asio::bind_executor(strand_,
                                        [self](const beast::error_code &ec) {
+                                           if (self->closing_) return; // prevent late continuation
                                            if (ec) return self->fail_(ec, "tls_handshake");
                                            self->do_ws_handshake_();
                                        }
@@ -370,6 +374,12 @@ namespace md {
         stop_ping_loop_();
         disarm_connect_deadline_();
 
+        // IMPORTANT: stop any in-flight resolve/connect pipeline
+        resolver_.cancel(); {
+            boost::system::error_code ignored;
+            beast::get_lowest_layer(ws_).cancel(ignored);
+        }
+
         // Hard-close the socket; no attempt to be graceful on error paths.
         close_socket_hard_();
         notify_close_once_();
@@ -387,6 +397,7 @@ namespace md {
     void WsClient::close_socket_hard_() noexcept {
         boost::system::error_code ignored;
         auto &sock = beast::get_lowest_layer(ws_);
+        resolver_.cancel();
         sock.cancel(ignored);
         sock.close(ignored);
     }

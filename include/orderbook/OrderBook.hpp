@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <string>
 
 struct Level {
     std::int64_t priceTick;
@@ -175,6 +176,8 @@ namespace md {
          * Returns the top-of-book bid level (index 0).
          */
         [[nodiscard]] const Level &best_bid() const noexcept {
+            static const Level empty{0, 0, "", ""};
+            if (bids.empty()) return empty;
             return bids.front();
         }
 
@@ -182,6 +185,8 @@ namespace md {
          * Returns the top-of-book ask level (index 0).
          */
         [[nodiscard]] const Level &best_ask() const noexcept {
+            static const Level empty{0, 0, "", ""};
+            if (asks.empty()) return empty;
             return asks.front();
         }
 
