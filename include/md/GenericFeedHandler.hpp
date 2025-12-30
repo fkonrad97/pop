@@ -11,7 +11,6 @@
 #include "client_connection_handlers/WsClient.hpp"
 #include "client_connection_handlers/RestClient.hpp"
 #include "orderbook/OrderBookController.hpp"
-#include "stream_parser/UpdateTypes.hpp"
 #include "md/VenueAdapter.hpp"
 
 namespace md {

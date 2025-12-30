@@ -4,8 +4,14 @@
 
 namespace md {
     GenericFeedHandler::GenericFeedHandler(boost::asio::io_context &ioc): ioc_(ioc),
-                                                                          ws_(std::make_shared<WsClient>(ioc)),
-                                                                          rest_(std::make_shared<RestClient>(ioc)) {
+                                                                          ws_(std::make_shared<WsClient>(ioc)) {
+        rest_ = RestClient::create(ioc_); // factory, not make_shared
+
+        rest_->set_keep_alive(true); // strongly recommended for snapshots
+        rest_->set_logger([](std::string_view s) {
+            // plug into your logging system; std::cerr is fine for now
+            std::cerr << s << "\n";
+        });
     }
 
     std::string GenericFeedHandler::makeConnectId() const {
@@ -123,7 +129,7 @@ namespace md {
     void GenericFeedHandler::requestSnapshot() {
         if (!running_.load()) return;
 
-        rest_->async_get(rt_.rest.host, rt_.restSnapshotTarget, rt_.rest.port,
+        rest_->async_get(rt_.rest.host, rt_.rest.port, rt_.restSnapshotTarget,
                          [this](boost::system::error_code ec, const std::string &body) {
                              if (ec) {
                                  std::cerr << "[REST][GET][ERR] " << ec.message() << "\n";

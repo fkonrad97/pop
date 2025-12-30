@@ -131,10 +131,10 @@ namespace md {
         RawMessageHandler on_raw_message_;
         OpenHandler   on_open_;
 
+    private:
         // =====================
         // Chain step helpers
         // =====================
-
         /**
          * @brief Resolve DNS (host_:port).
          * Next: do_tcp_connect_(results)

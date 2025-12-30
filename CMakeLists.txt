@@ -105,7 +105,7 @@ file(GLOB CORE_ORDERBOOK_HEADERS
 )
 
 # Utilities
-file(GLOB CORE_INCLUDE_HEADERS
+file(GLOB CORE_UTIL_HEADERS
         CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/include/utils/*.hpp"
 )
