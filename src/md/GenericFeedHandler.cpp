@@ -51,7 +51,7 @@ namespace md {
 
         if (!cfg_.rest_host.empty()) rt_.rest.host = cfg_.rest_host;
         if (!cfg_.rest_port.empty()) rt_.rest.port = cfg_.rest_port;
-        if (!cfg_.rest_path.empty()) rt_.rest.target = cfg_.rest_path;
+        if (!cfg_.rest_path.empty()) rt_.restSnapshotTarget = cfg_.rest_path;
 
         rt_.wsSubscribeFrame = std::visit([&](auto const &a) { return a.wsSubscribeFrame(cfg_); }, adapter_);
         rt_.restSnapshotTarget = std::visit([&](auto const &a) { return a.restSnapshotTarget(cfg_); }, adapter_);
@@ -95,19 +95,16 @@ namespace md {
     Status GenericFeedHandler::stop() {
         running_.store(false, std::memory_order_release);
 
-        if (rest_) {
-            rest_->cancel();
-        }
-        if (ws_) {
-            ws_->close(); // or whatever your WS client uses
-        }
+        if (rest_) rest_->cancel();
+        if (ws_) ws_->close();
 
         state_ = SyncState::DISCONNECTED;
         buffer_.clear();
-        controller_->resetBook();
 
+        if (controller_) controller_->resetBook();
         return Status::OK;
     }
+
 
 
     /**
@@ -357,23 +354,19 @@ namespace md {
         buffer_.clear();
         controller_->resetBook();
 
-        if (rt_.caps.sync_mode == SyncMode::RestAnchored) {
-            state_ = SyncState::WAIT_REST_SNAPSHOT;
-            requestSnapshot();
-            return;
-        }
+        // Reset state before reconnect
+        state_ = SyncState::CONNECTING;
 
-        // WsAuthoritative: force reconnect to obtain a fresh snapshot baseline
-        state_ = SyncState::WAIT_WS_SNAPSHOT;
+        // Correlate bootstrap if needed
+        connect_id_ = makeConnectId();
 
-        connect_id_ = makeConnectId(); // refresh bootstrap/connect correlation id
+        // Force-close current WS (immediate) and reconnect after a short backoff.
         closing_for_restart_ = true;
-        ws_->close();
+        ws_->cancel();
 
-        /// Prevent tight reconnect loops; schedule a small backoff reconnect.
-        /// If wants exponential backoff, we can extend this easily.
-        schedule_ws_reconnect_(std::chrono::milliseconds(150));
+        schedule_ws_reconnect_(std::chrono::milliseconds(200));
     }
+
 
     void GenericFeedHandler::bootstrapWS() {
         if (!running_.load()) return;
@@ -433,7 +426,6 @@ namespace md {
     }
 
     void GenericFeedHandler::schedule_ws_reconnect_(std::chrono::milliseconds delay) {
-        // Single-flight scheduler: cancels previous, schedules only latest generation.
         ++reconnect_gen_;
         const auto my_gen = reconnect_gen_;
 
@@ -441,12 +433,19 @@ namespace md {
         reconnect_timer_.expires_after(delay);
 
         reconnect_timer_.async_wait([this, my_gen](const boost::system::error_code &ec) {
-            if (ec) return; // canceled
-            if (!running_.load()) return; // stopped
-            if (my_gen != reconnect_gen_) return; // superseded
+            if (ec) return;
+            if (!running_.load()) return;
+            if (my_gen != reconnect_gen_) return;
 
             reconnect_scheduled_ = false;
-            connectWS();
+
+            if (rt_.caps.requires_ws_bootstrap) {
+                state_ = SyncState::BOOTSTRAPPING;
+                bootstrapWS();
+            } else {
+                state_ = SyncState::CONNECTING;
+                connectWS();
+            }
         });
     }
 }
