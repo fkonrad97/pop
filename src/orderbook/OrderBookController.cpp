@@ -58,7 +58,6 @@ namespace md {
         }
 
         // ---- Bridging phase (RestAnchored) ----
-        // ---- Bridging phase (RestAnchored) ----
         if (state_ == SyncState::WaitingBridge) {
             if (has_seq) {
                 const std::uint64_t required = expected_seq_;

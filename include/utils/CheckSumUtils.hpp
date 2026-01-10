@@ -4,6 +4,8 @@
 #include <boost/crc.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include "orderbook/OrderBook.hpp"
 
 namespace md {
     class OrderBook;

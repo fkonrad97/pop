@@ -38,7 +38,7 @@ namespace md {
     }
 
     std::string BybitAdapter::wsSubscribeFrame(const FeedHandlerConfig &cfg) const {
-        const std::string instId = venue::map_ws_symbol(VenueId::BYBIT, cfg.base_ccy, cfg.quote_ccy); // "BTC-USDT"
+        const std::string instId = venue::map_ws_symbol(VenueId::BYBIT, cfg.base_ccy, cfg.quote_ccy);
 
         json j;
         j["op"] = "subscribe";
@@ -46,7 +46,7 @@ namespace md {
         return j.dump();
     }
 
-    std::string BybitAdapter::restSnapshotTarget(const FeedHandlerConfig &cfg) const {
+    std::string BybitAdapter::restSnapshotTarget(const FeedHandlerConfig &) const {
         return "";
     }
 

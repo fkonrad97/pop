@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <string>
 
 struct Level {
     std::int64_t priceTick;
@@ -167,14 +168,16 @@ namespace md {
          * - Depth and vector sizes are preserved: bids_.size() == asks_.size() == depth_.
          */
         void clear() noexcept {
-            std::fill(bids.begin(), bids.end(), Level{});
-            std::fill(asks.begin(), asks.end(), Level{});
+            bids.clear();
+            asks.clear();
         }
 
         /**
          * Returns the top-of-book bid level (index 0).
          */
         [[nodiscard]] const Level &best_bid() const noexcept {
+            static const Level empty{0, 0, "", ""};
+            if (bids.empty()) return empty;
             return bids.front();
         }
 
@@ -182,6 +185,8 @@ namespace md {
          * Returns the top-of-book ask level (index 0).
          */
         [[nodiscard]] const Level &best_ask() const noexcept {
+            static const Level empty{0, 0, "", ""};
+            if (asks.empty()) return empty;
             return asks.front();
         }
 

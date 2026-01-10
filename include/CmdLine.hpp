@@ -6,6 +6,9 @@
 #include <string>
 #include <iostream>
 #include <algorithm>
+#include <optional>
+#include <ranges>
+#include <cctype>
 
 struct CmdOptions {
     std::string venue; // required
@@ -33,25 +36,17 @@ struct CmdOptions {
 
 inline md::VenueId parse_venue(const std::string &v_raw) {
     std::string v = v_raw;
-    std::ranges::transform(v, v.begin(), ::tolower);
+    std::ranges::transform(v, v.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-    if (v == "binance") {
-        return md::VenueId::BINANCE;
-    }
-    if (v == "okx") {
-        return md::VenueId::OKX;
-    }
-    if (v == "bybit") {
-        return md::VenueId::BYBIT;
-    }
-    if (v == "bitget") {
-        return md::VenueId::BITGET;
-    }
-    if (v == "kucoin") {
-        return md::VenueId::KUCOIN;
-    }
+    if (v == "binance") return md::VenueId::BINANCE;
+    if (v == "okx") return md::VenueId::OKX;
+    if (v == "bybit") return md::VenueId::BYBIT;
+    if (v == "bitget") return md::VenueId::BITGET;
+    if (v == "kucoin") return md::VenueId::KUCOIN;
     return md::VenueId::UNKNOWN;
 }
+
 
 inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
     namespace po = boost::program_options;
@@ -122,12 +117,12 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
     out.base = vm["base"].as<std::string>();
     out.quote = vm["quote"].as<std::string>();
     out.depthLevel = vm["depthLevel"].as<int>();
-    if (vm.contains("ws_host")) out.ws_host = vm["ws_host"].as<std::string>();
-    if (vm.contains("ws_port")) out.ws_port = vm["ws_port"].as<std::string>();
-    if (vm.contains("ws_path")) out.ws_path = vm["ws_path"].as<std::string>();
-    if (vm.contains("rest_host")) out.rest_host = vm["rest_host"].as<std::string>();
-    if (vm.contains("rest_port")) out.rest_port = vm["rest_port"].as<std::string>();
-    if (vm.contains("rest_path")) out.rest_path = vm["rest_path"].as<std::string>();
+    if (vm.count("ws_host")) out.ws_host = vm["ws_host"].as<std::string>();
+    if (vm.count("ws_port")) out.ws_port = vm["ws_port"].as<std::string>();
+    if (vm.count("ws_path")) out.ws_path = vm["ws_path"].as<std::string>();
+    if (vm.count("rest_host")) out.rest_host = vm["rest_host"].as<std::string>();
+    if (vm.count("rest_port")) out.rest_port = vm["rest_port"].as<std::string>();
+    if (vm.count("rest_path")) out.rest_path = vm["rest_path"].as<std::string>();
 
     /// DEBUG
     out.debug = vm["debug"].as<bool>();

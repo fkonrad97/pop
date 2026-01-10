@@ -4,8 +4,16 @@
 
 namespace md {
     GenericFeedHandler::GenericFeedHandler(boost::asio::io_context &ioc): ioc_(ioc),
-                                                                          ws_(std::make_shared<WsClient>(ioc)),
-                                                                          rest_(std::make_shared<RestClient>(ioc)) {
+                                                                          ws_(WsClient::create(ioc)),
+                                                                          rest_(RestClient::create(ioc)),
+                                                                          reconnect_timer_(ioc) {
+        rest_->set_keep_alive(true); // strongly recommended for snapshots
+        rest_->set_logger([](std::string_view s) {
+            // plug into your logging system; std::cerr is fine for now
+            std::cerr << s << "\n";
+        });
+        rest_->set_timeout(std::chrono::milliseconds(2000));
+        rest_->set_shutdown_timeout(std::chrono::milliseconds(150));
     }
 
     std::string GenericFeedHandler::makeConnectId() const {
@@ -43,7 +51,7 @@ namespace md {
 
         if (!cfg_.rest_host.empty()) rt_.rest.host = cfg_.rest_host;
         if (!cfg_.rest_port.empty()) rt_.rest.port = cfg_.rest_port;
-        if (!cfg_.rest_path.empty()) rt_.rest.target = cfg_.rest_path;
+        if (!cfg_.rest_path.empty()) rt_.restSnapshotTarget = cfg_.rest_path;
 
         rt_.wsSubscribeFrame = std::visit([&](auto const &a) { return a.wsSubscribeFrame(cfg_); }, adapter_);
         rt_.restSnapshotTarget = std::visit([&](auto const &a) { return a.restSnapshotTarget(cfg_); }, adapter_);
@@ -67,6 +75,10 @@ namespace md {
         /// Wire WS callback once
         ws_->set_on_open([this] { onWSOpen(); });
         ws_->set_on_raw_message([this](const char *data, std::size_t len) { onWSMessage(data, len); });
+        ws_->set_on_close([this] {
+            if (!running_.load(std::memory_order_acquire)) return;
+            onWSClose_();
+        });
 
         connect_id_ = makeConnectId();
 
@@ -81,19 +93,29 @@ namespace md {
     }
 
     Status GenericFeedHandler::stop() {
-        if (!running_.exchange(false)) return Status::ERROR;
+        running_.store(false, std::memory_order_release);
+
+        if (rest_) rest_->cancel();
+        if (ws_) ws_->close();
 
         state_ = SyncState::DISCONNECTED;
         buffer_.clear();
-        controller_->resetBook();
+
+        if (controller_) controller_->resetBook();
         return Status::OK;
     }
+
 
 
     /**
      * - Generic WS connect uses resolved endpoint
      */
     void GenericFeedHandler::connectWS() {
+        if (rt_.ws_ping_interval_ms > 0) {
+            ws_->set_idle_ping(std::chrono::milliseconds(rt_.ws_ping_interval_ms));
+        } else {
+            ws_->set_idle_ping(std::chrono::milliseconds(0));
+        }
         ws_->connect(rt_.ws.host, rt_.ws.port, rt_.ws.target);
     }
 
@@ -121,21 +143,43 @@ namespace md {
      * - Async GET snapshot
      */
     void GenericFeedHandler::requestSnapshot() {
-        if (!running_.load()) return;
+        state_ = SyncState::WAIT_REST_SNAPSHOT;
 
-        rest_->async_get(rt_.rest.host, rt_.restSnapshotTarget, rt_.rest.port,
-                         [this](boost::system::error_code ec, const std::string &body) {
+        rest_->async_get(rt_.rest.host, rt_.rest.port, rt_.restSnapshotTarget,
+                         [this](boost::system::error_code ec, std::string body) {
+                             if (!running_.load(std::memory_order_acquire)) return;
+
                              if (ec) {
-                                 std::cerr << "[REST][GET][ERR] " << ec.message() << "\n";
+                                 // network / TLS / timeout errors
                                  restartSync();
                                  return;
                              }
 
-                             std::cout << "requestSnapshot() ::: " << body << "\n";
+                             const int status = rest_->last_http_status();
+
+                             if (status == 429 || status == 418) {
+                                 /// Rate-limited / temporary ban -> do NOT hammer.
+                                 /// Simple fixed delay; replace with exponential backoff later.
+                                 reconnect_timer_.expires_after(std::chrono::milliseconds(750));
+                                 reconnect_timer_.async_wait([this](const boost::system::error_code &ec) {
+                                     if (ec) return;
+                                     if (!running_.load()) return;
+                                     requestSnapshot();
+                                 });
+                                 return;
+                             }
+
+                             if (status < 200 || status >= 300) {
+                                 // 4xx/5xx -> handle separately if you want
+                                 restartSync();
+                                 return;
+                             }
 
                              onSnapshotResponse(body);
-                         });
+                         }
+        );
     }
+
 
     void GenericFeedHandler::onSnapshotResponse(std::string_view body) {
         if (!running_.load()) return;
@@ -144,8 +188,6 @@ namespace md {
         const bool ok = std::visit([&](auto const &a) noexcept {
             return a.parseSnapshot(body, snap);
         }, adapter_);
-
-        std::cout << body << std::endl;
 
         if (!ok) {
             restartSync();
@@ -216,8 +258,6 @@ namespace md {
             const bool isSnap = std::visit([&](auto const &a) noexcept {
                 return a.isSnapshot(msg) && a.parseWsSnapshot(msg, snap);
             }, adapter_);
-
-            std::cout << "[GenericFeedHandler] WSMessage received: " << msg << std::endl;
 
             if (isSnap) {
                 controller_->onSnapshot(snap, OrderBookController::BaselineKind::WsAuthoritative);
@@ -314,18 +354,19 @@ namespace md {
         buffer_.clear();
         controller_->resetBook();
 
-        if (rt_.caps.sync_mode == SyncMode::RestAnchored) {
-            state_ = SyncState::WAIT_REST_SNAPSHOT;
-            requestSnapshot();
-        } else {
-            state_ = SyncState::WAIT_WS_SNAPSHOT;
+        // Reset state before reconnect
+        state_ = SyncState::CONNECTING;
 
-            // Minimal safe behavior: wait for a fresh WS snapshot.
-            // In practice many venues require a resubscribe/reconnect to trigger a new snapshot.
-            // You can upgrade later to:
-            // ws_->close(); connectWS();
-        }
+        // Correlate bootstrap if needed
+        connect_id_ = makeConnectId();
+
+        // Force-close current WS (immediate) and reconnect after a short backoff.
+        closing_for_restart_ = true;
+        ws_->cancel();
+
+        schedule_ws_reconnect_(std::chrono::milliseconds(200));
     }
+
 
     void GenericFeedHandler::bootstrapWS() {
         if (!running_.load()) return;
@@ -371,5 +412,40 @@ namespace md {
                               connectWS();
                           }
         );
+    }
+
+    void GenericFeedHandler::onWSClose_() {
+        // If we initiated the close as part of restartSync(), do NOT re-enter restartSync().
+        if (closing_for_restart_) {
+            closing_for_restart_ = false;
+            return;
+        }
+
+        // Unexpected close (network flap, remote close, etc.)
+        restartSync();
+    }
+
+    void GenericFeedHandler::schedule_ws_reconnect_(std::chrono::milliseconds delay) {
+        ++reconnect_gen_;
+        const auto my_gen = reconnect_gen_;
+
+        reconnect_scheduled_ = true;
+        reconnect_timer_.expires_after(delay);
+
+        reconnect_timer_.async_wait([this, my_gen](const boost::system::error_code &ec) {
+            if (ec) return;
+            if (!running_.load()) return;
+            if (my_gen != reconnect_gen_) return;
+
+            reconnect_scheduled_ = false;
+
+            if (rt_.caps.requires_ws_bootstrap) {
+                state_ = SyncState::BOOTSTRAPPING;
+                bootstrapWS();
+            } else {
+                state_ = SyncState::CONNECTING;
+                connectWS();
+            }
+        });
     }
 }

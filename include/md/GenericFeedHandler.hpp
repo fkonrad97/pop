@@ -11,7 +11,6 @@
 #include "client_connection_handlers/WsClient.hpp"
 #include "client_connection_handlers/RestClient.hpp"
 #include "orderbook/OrderBookController.hpp"
-#include "stream_parser/UpdateTypes.hpp"
 #include "md/VenueAdapter.hpp"
 
 namespace md {
@@ -82,6 +81,11 @@ namespace md {
 
         std::string makeConnectId() const;
 
+        void onWSClose_();
+
+        void schedule_ws_reconnect_(std::chrono::milliseconds delay);
+
+    private:
         boost::asio::io_context &ioc_;
         std::shared_ptr<WsClient> ws_;
         std::shared_ptr<RestClient> rest_;
@@ -100,5 +104,10 @@ namespace md {
         /// Incremental buffer during snapshot syncing
         std::deque<std::string> buffer_; /// later optimize to ring buffer / pooled storage
         std::size_t max_buffer_{10'000};
+
+        boost::asio::steady_timer reconnect_timer_;
+        std::uint64_t reconnect_gen_{0};
+        bool reconnect_scheduled_{false};
+        bool closing_for_restart_{false};
     };
 }

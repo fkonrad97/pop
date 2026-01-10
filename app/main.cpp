@@ -11,7 +11,7 @@
 // Your other headers that may include Boost should also be above the macro:
 #include "CmdLine.hpp"
 #include "abstract/FeedHandler.hpp"
-#include "../include/utils/VenueUtils.hpp"
+#include "utils/VenueUtils.hpp"
 
 // / ---- DEBUG ONLY (main.cpp) ----
 // Allows main.cpp to peek into GenericFeedHandler internals for console debugging.
@@ -30,13 +30,14 @@
 #include "utils/DebugConfigUtils.hpp"
 
 static void print_book_bbo(const md::OrderBook &book) {
-    // Adjust this if your OrderBook API differs.
-    const auto bb = book.best_bid();
-    const auto ba = book.best_ask();
+    const Level *bb = book.bid_ptr(0);
+    const Level *ba = book.ask_ptr(0);
+    if (!bb || !ba) return;
 
-    std::cout << "[BBO] bid=" << bb.priceTick << " qty=" << bb.quantityLot
-            << " | ask=" << ba.priceTick << " qty=" << ba.quantityLot << "\n";
+    std::cout << "[BBO] bid=" << bb->priceTick << " qty=" << bb->quantityLot
+            << " | ask=" << ba->priceTick << " qty=" << ba->quantityLot << "\n";
 }
+
 
 static std::string make_binance_ws_topic(const CmdOptions &opt,
                                          const md::FeedHandlerConfig &cfg,
