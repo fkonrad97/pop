@@ -19,7 +19,6 @@ namespace md {
 
         bool ws_sends_snapshot{false}; // expects WS snapshot messages
         bool has_checksum{false}; // checksum available/expected
-        bool can_backfill{false}; // can backfill missing ranges
         bool requires_ws_bootstrap{false}; // Kucoin needs bullet-boostrap before connecting to WS
 
         // resolved checksum policy (cold path)

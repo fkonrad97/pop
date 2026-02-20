@@ -14,7 +14,6 @@ namespace md {
         c.sync_mode = SyncMode::RestAnchored;
         c.ws_sends_snapshot = false;
         c.has_checksum = false;
-        c.can_backfill = false;
         return c;
     }
 

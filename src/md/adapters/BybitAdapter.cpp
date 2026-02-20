@@ -17,7 +17,6 @@ namespace md {
         c.sync_mode = SyncMode::WsAuthoritative;
         c.ws_sends_snapshot = true;
         c.has_checksum = false;
-        c.can_backfill = false;
         return c;
     }
 

@@ -17,7 +17,6 @@ namespace md {
         c.checksum_fn = &checkBitgetCRC32;
         c.checksum_top_n = 25;
 
-        c.can_backfill = false;
         return c;
     }
 
