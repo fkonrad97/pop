@@ -12,8 +12,9 @@ namespace md {
             // plug into your logging system; std::cerr is fine for now
             std::cerr << s << "\n";
         });
-        rest_->set_timeout(std::chrono::milliseconds(2000));
-        rest_->set_shutdown_timeout(std::chrono::milliseconds(150));
+        // should be decreased for prod
+        rest_->set_timeout(std::chrono::milliseconds(8000));
+        rest_->set_shutdown_timeout(std::chrono::milliseconds(2000));
     }
 
     std::string GenericFeedHandler::makeConnectId() const {
@@ -58,6 +59,13 @@ namespace md {
 
         controller_ = std::make_unique<OrderBookController>(rt_.depth);
         controller_->configureChecksum(rt_.caps.checksum_fn, rt_.caps.checksum_top_n);
+        // KuCoin and a few other venues may emit non-contiguous sequence numbers
+        // especially when using partial REST snapshots.  Allow controller to
+        // tolerate gaps if requested by the adapter via VenueCaps.
+        controller_->setAllowSequenceGap(rt_.caps.allow_seq_gap);
+        if (rt_.caps.allow_seq_gap) {
+            std::cerr << "[GenericFeedHandler] ALLOW_SEQ_GAP enabled for venue\n";
+        }
 
         buffer_.clear();
         state_ = SyncState::DISCONNECTED;
@@ -351,6 +359,8 @@ namespace md {
     void GenericFeedHandler::restartSync() {
         if (!running_.load()) return;
 
+        std::cout << "[GenericFeedHandler] restarting sync...\n";
+
         buffer_.clear();
         controller_->resetBook();
 
@@ -371,12 +381,15 @@ namespace md {
     void GenericFeedHandler::bootstrapWS() {
         if (!running_.load()) return;
 
+        std::cout << "[GenericFeedHandler] bootstrapping WS...\n";
+
         const std::string target = std::visit([&](auto const &a) {
             return a.wsBootstrapTarget(cfg_);
         }, adapter_);
 
         if (target.empty()) {
             // caps say we require bootstrap but adapter can't provide it -> hard fail
+            std::cerr << "[GenericFeedHandler] ERROR: venue requires WS bootstrap but adapter did not provide target\n";
             restartSync();
             return;
         }

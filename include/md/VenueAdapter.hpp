@@ -21,6 +21,7 @@ namespace md {
         bool has_checksum{false}; // checksum available/expected
         bool can_backfill{false}; // can backfill missing ranges
         bool requires_ws_bootstrap{false}; // Kucoin needs bullet-boostrap before connecting to WS
+        bool allow_seq_gap{false}; // if true, controller will tolerate non-contiguous sequence numbers
 
         // resolved checksum policy (cold path)
         ChecksumFn checksum_fn{nullptr};

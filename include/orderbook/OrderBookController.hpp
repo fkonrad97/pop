@@ -52,6 +52,11 @@ namespace md {
             checksum_topN_ = topN;
         }
 
+        /// In some venues (e.g. KuCoin) sequence numbers may jump when snapshot is
+        /// partial; enabling this flag instructs the controller to tolerate gaps
+        /// instead of forcing a resync.  Defaults to false (strict continuity).
+        void setAllowSequenceGap(bool allow) noexcept { allow_seq_gap_ = allow; }
+
         enum class BaselineKind : std::uint8_t { RestAnchored, WsAuthoritative };
 
         enum class Action {
@@ -113,6 +118,8 @@ namespace md {
 
         ChecksumFn checksum_fn_{nullptr};
         std::size_t checksum_topN_{25};
+
+        bool allow_seq_gap_{false};
 
         bool validateChecksum(std::int64_t expected) const noexcept {
             if (!checksum_fn_) return true;
