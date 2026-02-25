@@ -20,6 +20,7 @@ namespace md {
         bool ws_sends_snapshot{false}; // expects WS snapshot messages
         bool has_checksum{false}; // checksum available/expected
         bool requires_ws_bootstrap{false}; // Kucoin needs bullet-boostrap before connecting to WS
+        bool allow_seq_gap{false}; // if true, controller will tolerate non-contiguous sequence numbers
 
         // resolved checksum policy (cold path)
         ChecksumFn checksum_fn{nullptr};

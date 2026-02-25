@@ -152,6 +152,10 @@ namespace md {
         c.ws_sends_snapshot = false;
         c.has_checksum = false;
         c.requires_ws_bootstrap = true;
+        // KuCoin partial snapshots may leave gaps between the snapshot's
+        // sequence and the first incremental update we receive.  Allow the
+        // controller to jump ahead rather than constantly resyncing.
+        c.allow_seq_gap = true;
         return c;
     }
 

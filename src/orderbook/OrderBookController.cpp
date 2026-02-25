@@ -75,12 +75,18 @@ namespace md {
                 }
 
                 if (msg.first_seq > required) {
-                    std::cerr << "[CTRL][BRIDGE] RESYNC gap: msg.first > required ("
-                            << msg.first_seq << " > " << required << ")\n";
-                    return Action::NeedResync;
+                    if (!allow_seq_gap_) {
+                        std::cerr << "[CTRL][BRIDGE] RESYNC gap: msg.first > required ("
+                                << msg.first_seq << " > " << required << ")\n";
+                        return Action::NeedResync;
+                    } else {
+                        std::cerr << "[CTRL][BRIDGE] GAP tolerated (allow_seq_gap_)\n";
+                        // fall through and apply below
+                    }
                 }
 
-                // Covers required (overlap OK for absolute level-set updates)
+                // Covers required (overlap OK for absolute level-set updates) or
+                // gap-tolerated case.
                 std::cerr << "[CTRL][BRIDGE] APPLY covers required=" << required
                         << " (first=" << msg.first_seq << ", last=" << msg.last_seq << ")\n";
 
@@ -118,9 +124,14 @@ namespace md {
             const std::uint64_t required = expected_seq_;
 
             if (msg.last_seq < required) return Action::None; // outdated
-            if (msg.first_seq > required) return Action::NeedResync; // gap
+            if (msg.first_seq > required) {
+                if (!allow_seq_gap_) {
+                    return Action::NeedResync; // gap
+                }
+                // allow_seq_gap_ == true -> tolerate gap and continue
+            }
 
-            // overlap/cover is OK
+            // overlap/cover is OK (or gap tolerated)
             applyIncrementUpdate(msg);
             last_seq_ = msg.last_seq;
             expected_seq_ = last_seq_ + 1;
