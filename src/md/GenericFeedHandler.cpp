@@ -359,8 +359,6 @@ namespace md {
     void GenericFeedHandler::restartSync() {
         if (!running_.load()) return;
 
-        std::cout << "[GenericFeedHandler] restarting sync...\n";
-
         buffer_.clear();
         controller_->resetBook();
 
@@ -380,8 +378,6 @@ namespace md {
 
     void GenericFeedHandler::bootstrapWS() {
         if (!running_.load()) return;
-
-        std::cout << "[GenericFeedHandler] bootstrapping WS...\n";
 
         const std::string target = std::visit([&](auto const &a) {
             return a.wsBootstrapTarget(cfg_);

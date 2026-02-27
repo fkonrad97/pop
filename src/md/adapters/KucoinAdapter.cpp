@@ -230,8 +230,6 @@ namespace md {
             return false;
         }
 
-        std::cout << "JSON ::: " << j.dump() << std::endl;
-
         if (!j.contains("data")) return false;
         const auto &d = j["data"];
 
@@ -241,8 +239,6 @@ namespace md {
 
         if (d.contains("bids")) parseLevels2col(d["bids"], out.bids);
         if (d.contains("asks")) parseLevels2col(d["asks"], out.asks);
-
-        std::cout << "parseSnaphot MSG ::: " << msg << std::endl;
 
         if (debug::dbg_on()) {
             static std::uint64_t snap_cnt = 0;
