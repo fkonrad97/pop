@@ -193,7 +193,7 @@ namespace md {
         if (!running_.load()) return;
 
         GenericSnapshotFormat snap;
-        const bool ok = std::visit([&](auto const &a) noexcept {
+        const bool ok = std::visit([&](auto const &a) {
             return a.parseSnapshot(body, snap);
         }, adapter_);
 
@@ -229,7 +229,7 @@ namespace md {
 
             const std::string &msg = buffer_.front();
 
-            const bool ok = std::visit([&](auto const &a) noexcept {
+            const bool ok = std::visit([&](auto const &a) {
                 if (!a.isIncremental(msg)) return false;
                 return a.parseIncremental(msg, inc);
             }, adapter_);
@@ -252,7 +252,7 @@ namespace md {
 
         if (state_ == SyncState::WAIT_REST_SNAPSHOT) {
             // buffer incrementals
-            const bool isInc = std::visit([&](auto const &a) noexcept { return a.isIncremental(msg); }, adapter_);
+            const bool isInc = std::visit([&](auto const &a) { return a.isIncremental(msg); }, adapter_);
             if (isInc) {
                 if (buffer_.size() < max_buffer_) buffer_.emplace_back(msg);
                 else restartSync();
@@ -263,7 +263,7 @@ namespace md {
         if (state_ == SyncState::WAIT_WS_SNAPSHOT) {
             // first, try snapshot
             GenericSnapshotFormat snap;
-            const bool isSnap = std::visit([&](auto const &a) noexcept {
+            const bool isSnap = std::visit([&](auto const &a) {
                 return a.isSnapshot(msg) && a.parseWsSnapshot(msg, snap);
             }, adapter_);
 
@@ -278,7 +278,7 @@ namespace md {
             }
 
             // otherwise buffer incrementals
-            const bool isInc = std::visit([&](auto const &a) noexcept { return a.isIncremental(msg); }, adapter_);
+            const bool isInc = std::visit([&](auto const &a) { return a.isIncremental(msg); }, adapter_);
             if (isInc) {
                 if (buffer_.size() < max_buffer_) buffer_.emplace_back(msg);
                 else restartSync();
@@ -290,7 +290,7 @@ namespace md {
         // 1) For WS-authoritative venues, allow an "interrupting" WS snapshot at ANY time and re-baseline.
         if ((state_ == SyncState::WAIT_BRIDGE || state_ == SyncState::SYNCED) && rt_.caps.ws_sends_snapshot) {
             GenericSnapshotFormat snap;
-            const bool isSnap = std::visit([&](auto const &a) noexcept {
+            const bool isSnap = std::visit([&](auto const &a) {
                 return a.isSnapshot(msg) && a.parseWsSnapshot(msg, snap);
             }, adapter_);
 
@@ -312,7 +312,7 @@ namespace md {
         if (state_ == SyncState::WAIT_BRIDGE || state_ == SyncState::SYNCED) {
             // --- RestAnchored: during WAIT_BRIDGE we ONLY buffer+drain ---
             if (rt_.caps.sync_mode == SyncMode::RestAnchored && state_ == SyncState::WAIT_BRIDGE) {
-                const bool isInc = std::visit([&](auto const &a) noexcept { return a.isIncremental(msg); }, adapter_);
+                const bool isInc = std::visit([&](auto const &a) { return a.isIncremental(msg); }, adapter_);
                 if (!isInc) return;
 
                 if (buffer_.size() < max_buffer_) buffer_.emplace_back(msg);
@@ -332,7 +332,7 @@ namespace md {
 
             // --- Otherwise: steady-state apply (SYNCED, or WS-authoritative venues) ---
             GenericIncrementalFormat inc;
-            const bool ok = std::visit([&](auto const &a) noexcept {
+            const bool ok = std::visit([&](auto const &a) {
                 if (!a.isIncremental(msg)) return false;
                 return a.parseIncremental(msg, inc);
             }, adapter_);
@@ -403,7 +403,7 @@ namespace md {
                               }
 
                               WsBootstrapInfo info;
-                              const bool ok = std::visit([&](auto const &a) noexcept {
+                              const bool ok = std::visit([&](auto const &a) {
                                   return a.parseWsBootstrap(resp_body, connect_id_, info);
                               }, adapter_);
 

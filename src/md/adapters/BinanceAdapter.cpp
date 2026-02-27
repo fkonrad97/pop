@@ -74,7 +74,7 @@ namespace md {
         return msg.find("depthUpdate") != std::string_view::npos;
     }
 
-    bool BinanceAdapter::parseIncremental(std::string_view msg, GenericIncrementalFormat &update) const noexcept {
+    bool BinanceAdapter::parseIncremental(std::string_view msg, GenericIncrementalFormat &update) const {
         update.reset();
 
         json j = json::parse(msg.begin(), msg.end(), nullptr, false);
@@ -132,7 +132,7 @@ namespace md {
         return true;
     }
 
-    bool BinanceAdapter::parseSnapshot(std::string_view body, GenericSnapshotFormat &snap) const noexcept {
+    bool BinanceAdapter::parseSnapshot(std::string_view body, GenericSnapshotFormat &snap) const {
         snap.reset();
 
         try {

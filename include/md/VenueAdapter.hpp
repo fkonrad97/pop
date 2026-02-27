@@ -63,19 +63,19 @@ namespace md {
          */
         bool isIncremental(std::string_view msg) const noexcept;
 
-        bool parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const noexcept;
+        bool parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const;
 
         /// WS snapshot hooks (for WsAuthoritative venues)
         bool isSnapshot(std::string_view msg) const noexcept { return false; }
-        bool parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &) const noexcept { return false; }
+        bool parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &) const { return false; }
 
         /// REST snapshot
-        bool parseSnapshot(std::string_view body, GenericSnapshotFormat &out) const noexcept;
+        bool parseSnapshot(std::string_view body, GenericSnapshotFormat &out) const;
 
         // ---- NEW: WS bootstrap hooks (default no-op) ----
         std::string wsBootstrapTarget(const FeedHandlerConfig &) const { return {}; }
         std::string wsBootstrapBody(const FeedHandlerConfig &) const { return {}; }
-        bool parseWsBootstrap(std::string_view, std::string_view, WsBootstrapInfo &) const noexcept { return false; }
+        bool parseWsBootstrap(std::string_view, std::string_view, WsBootstrapInfo &) const { return false; }
     };
 
     struct OKXAdapter {
@@ -91,19 +91,19 @@ namespace md {
 
         bool isIncremental(std::string_view msg) const noexcept;
 
-        bool parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const noexcept;
+        bool parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const;
 
         bool isSnapshot(std::string_view msg) const noexcept;
 
-        bool parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &out) const noexcept;
+        bool parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &out) const;
 
         /// OKX does not use REST Snapshots, so can return false
-        bool parseSnapshot(std::string_view, GenericSnapshotFormat &) const noexcept { return false; }
+        bool parseSnapshot(std::string_view, GenericSnapshotFormat &) const { return false; }
 
         // ---- NEW: WS bootstrap hooks (default no-op) ----
         std::string wsBootstrapTarget(const FeedHandlerConfig &) const { return {}; }
         std::string wsBootstrapBody(const FeedHandlerConfig &) const { return {}; }
-        bool parseWsBootstrap(std::string_view, std::string_view, WsBootstrapInfo &) const noexcept { return false; }
+        bool parseWsBootstrap(std::string_view, std::string_view, WsBootstrapInfo &) const { return false; }
     };
 
     /// https://www.bitget.com/api-doc/spot/websocket/public/Depth-Channel
@@ -120,18 +120,18 @@ namespace md {
 
         bool isIncremental(std::string_view msg) const noexcept;
 
-        bool parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const noexcept;
+        bool parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const;
 
         bool isSnapshot(std::string_view msg) const noexcept;
 
-        bool parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &out) const noexcept;
+        bool parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &out) const;
 
-        bool parseSnapshot(std::string_view, GenericSnapshotFormat &) const noexcept { return false; };
+        bool parseSnapshot(std::string_view, GenericSnapshotFormat &) const { return false; };
 
         // ---- NEW: WS bootstrap hooks (default no-op) ----
         std::string wsBootstrapTarget(const FeedHandlerConfig &) const { return {}; }
         std::string wsBootstrapBody(const FeedHandlerConfig &) const { return {}; }
-        bool parseWsBootstrap(std::string_view, std::string_view, WsBootstrapInfo &) const noexcept { return false; }
+        bool parseWsBootstrap(std::string_view, std::string_view, WsBootstrapInfo &) const { return false; }
     };
 
     struct BybitAdapter {
@@ -147,18 +147,18 @@ namespace md {
 
         bool isIncremental(std::string_view msg) const noexcept;
 
-        bool parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const noexcept;
+        bool parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const;
 
         bool isSnapshot(std::string_view msg) const noexcept;
 
-        bool parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &out) const noexcept;
+        bool parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &out) const;
 
-        bool parseSnapshot(std::string_view, GenericSnapshotFormat &) const noexcept { return false; };
+        bool parseSnapshot(std::string_view, GenericSnapshotFormat &) const { return false; };
 
         // ---- NEW: WS bootstrap hooks (default no-op) ----
         std::string wsBootstrapTarget(const FeedHandlerConfig &) const { return {}; }
         std::string wsBootstrapBody(const FeedHandlerConfig &) const { return {}; }
-        bool parseWsBootstrap(std::string_view, std::string_view, WsBootstrapInfo &) const noexcept { return false; }
+        bool parseWsBootstrap(std::string_view, std::string_view, WsBootstrapInfo &) const { return false; }
     };
 
     struct KucoinAdapter {
@@ -174,18 +174,18 @@ namespace md {
 
         bool isIncremental(std::string_view msg) const noexcept;
 
-        bool parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const noexcept;
+        bool parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const;
 
         bool isSnapshot(std::string_view) const noexcept { return false; };
 
-        bool parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &) const noexcept { return false; };
+        bool parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &) const { return false; };
 
-        bool parseSnapshot(std::string_view, GenericSnapshotFormat &) const noexcept;
+        bool parseSnapshot(std::string_view, GenericSnapshotFormat &) const;
 
         // ---- NEW: KuCoin uses WS bootstrap (bullet-public) ----
         std::string wsBootstrapTarget(const FeedHandlerConfig &) const;
 
         std::string wsBootstrapBody(const FeedHandlerConfig &) const { return {}; } // empty POST
-        bool parseWsBootstrap(std::string_view body, std::string_view connect_id, WsBootstrapInfo &out) const noexcept;
+        bool parseWsBootstrap(std::string_view body, std::string_view connect_id, WsBootstrapInfo &out) const;
     };
 }

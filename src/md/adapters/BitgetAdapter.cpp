@@ -84,7 +84,7 @@ namespace md {
         }
     }
 
-    bool BitgetAdapter::parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &out) const noexcept {
+    bool BitgetAdapter::parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &out) const {
         out.reset();
 
         json j = json::parse(msg.begin(), msg.end(), nullptr, false);
@@ -142,7 +142,7 @@ namespace md {
         return true;
     }
 
-    bool BitgetAdapter::parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const noexcept {
+    bool BitgetAdapter::parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const {
         out.reset();
 
         json j = json::parse(msg.begin(), msg.end(), nullptr, false);

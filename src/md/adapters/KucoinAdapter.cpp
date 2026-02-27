@@ -80,7 +80,7 @@ namespace md {
 
     bool KucoinAdapter::parseWsBootstrap(std::string_view body,
                                          std::string_view connect_id,
-                                         WsBootstrapInfo &out) const noexcept {
+                                         WsBootstrapInfo &out) const {
         out = WsBootstrapInfo{};
 
         json j = json::parse(body.begin(), body.end(), nullptr, false);
@@ -218,7 +218,7 @@ namespace md {
         return true;
     }
 
-    bool KucoinAdapter::parseSnapshot(std::string_view msg, GenericSnapshotFormat &out) const noexcept {
+    bool KucoinAdapter::parseSnapshot(std::string_view msg, GenericSnapshotFormat &out) const {
         out.reset();
 
         json j = json::parse(msg.begin(), msg.end(), nullptr, false);
@@ -259,7 +259,7 @@ namespace md {
         return true;
     }
 
-    bool KucoinAdapter::parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const noexcept {
+    bool KucoinAdapter::parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const {
         out.reset();
 
         json j = json::parse(msg.begin(), msg.end(), nullptr, false);
