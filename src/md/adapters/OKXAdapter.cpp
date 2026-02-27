@@ -12,6 +12,9 @@ namespace md {
         VenueCaps c;
         c.sync_mode = SyncMode::WsAuthoritative;
         c.ws_sends_snapshot = true;
+        // TODO: Revisit OKX checksum/snapshot assumptions when exchange-side
+        // deprecation rollout completes; prefer seq-based integrity if checksum
+        // is removed from the feed.
         c.has_checksum = true;
         c.can_backfill = false;
         return c;

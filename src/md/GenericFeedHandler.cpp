@@ -50,12 +50,12 @@ namespace md {
         rt_.ws = std::visit([&](auto const &a) { return a.wsEndpoint(cfg_); }, adapter_);
         rt_.rest = std::visit([&](auto const &a) { return a.restEndpoint(cfg_); }, adapter_);
 
+        rt_.wsSubscribeFrame = std::visit([&](auto const &a) { return a.wsSubscribeFrame(cfg_); }, adapter_);
+        rt_.restSnapshotTarget = std::visit([&](auto const &a) { return a.restSnapshotTarget(cfg_); }, adapter_);
+
         if (!cfg_.rest_host.empty()) rt_.rest.host = cfg_.rest_host;
         if (!cfg_.rest_port.empty()) rt_.rest.port = cfg_.rest_port;
         if (!cfg_.rest_path.empty()) rt_.restSnapshotTarget = cfg_.rest_path;
-
-        rt_.wsSubscribeFrame = std::visit([&](auto const &a) { return a.wsSubscribeFrame(cfg_); }, adapter_);
-        rt_.restSnapshotTarget = std::visit([&](auto const &a) { return a.restSnapshotTarget(cfg_); }, adapter_);
 
         controller_ = std::make_unique<OrderBookController>(rt_.depth);
         controller_->configureChecksum(rt_.caps.checksum_fn, rt_.caps.checksum_top_n);
@@ -207,11 +207,7 @@ namespace md {
                     ? OrderBookController::BaselineKind::RestAnchored
                     : OrderBookController::BaselineKind::WsAuthoritative;
 
-        const auto snap_action = controller_->onSnapshot(snap, kind);
-        if (snap_action == OrderBookController::Action::NeedResync) {
-            restartSync();
-            return;
-        }
+        controller_->onSnapshot(snap, kind);
 
         /// Baseline loaded. We are not necessarily synced yet (RestAnchored must bridge).
         state_ = SyncState::WAIT_BRIDGE;
@@ -272,11 +268,7 @@ namespace md {
             }, adapter_);
 
             if (isSnap) {
-                const auto snap_action = controller_->onSnapshot(snap, OrderBookController::BaselineKind::WsAuthoritative);
-                if (snap_action == OrderBookController::Action::NeedResync) {
-                    restartSync();
-                    return;
-                }
+                controller_->onSnapshot(snap, OrderBookController::BaselineKind::WsAuthoritative);
 
                 // baseline is WS snapshot; any buffered msgs were pre-baseline, drain them now
                 state_ = SyncState::WAIT_BRIDGE;
@@ -304,11 +296,7 @@ namespace md {
 
             if (isSnap) {
                 // Hard re-baseline (venue may resend snapshot on internal resync)
-                const auto snap_action = controller_->onSnapshot(snap, OrderBookController::BaselineKind::WsAuthoritative);
-                if (snap_action == OrderBookController::Action::NeedResync) {
-                    restartSync();
-                    return;
-                }
+                controller_->onSnapshot(snap, OrderBookController::BaselineKind::WsAuthoritative);
 
                 // Any buffered incrementals are stale relative to this new baseline.
                 buffer_.clear();

@@ -14,6 +14,9 @@ namespace md {
         c.ws_sends_snapshot = true;
 
         c.has_checksum = true;
+        // TODO: Revisit snapshot checksum strictness for Bitget. In practice,
+        // enforcing snapshot checksum as a hard resync gate caused unstable
+        // WS behavior; keep incremental checksum validation as primary guard for now.
         c.checksum_fn = &checkBitgetCRC32;
         c.checksum_top_n = 25;
 
