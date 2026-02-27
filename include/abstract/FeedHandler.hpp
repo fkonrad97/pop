@@ -59,6 +59,9 @@ namespace md {
         std::string rest_host; ///< optional override, "" = default
         std::string rest_port; ///< optional override, "" = default
         std::string rest_path; ///< optional override, "" = default
+        std::string persist_path; ///< optional event persistence file path, "" = disabled
+        std::size_t persist_book_every_updates{0}; ///< 0 = disabled
+        std::size_t persist_book_top{0}; ///< top N levels per side for book_state
 
         size_t depthLevel{0};
     };

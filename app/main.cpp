@@ -84,6 +84,9 @@ int main(int argc, char **argv) {
     cfg.rest_host = options.rest_host.value_or("");
     cfg.rest_port = options.rest_port.value_or("");
     cfg.rest_path = options.rest_path.value_or("");
+    cfg.persist_path = options.persist_path.value_or("");
+    cfg.persist_book_every_updates = static_cast<std::size_t>(options.persist_book_every_updates);
+    cfg.persist_book_top = static_cast<std::size_t>(options.persist_book_top);
 
     /// DEBUG
     md::debug::enabled.store(options.debug, std::memory_order_relaxed);
@@ -131,7 +134,10 @@ int main(int argc, char **argv) {
             << "  ws_path    = " << (cfg.ws_path.empty() ? "<default>" : cfg.ws_path) << "\n"
             << "  rest_host  = " << (cfg.rest_host.empty() ? "<default>" : cfg.rest_host) << "\n"
             << "  rest_port  = " << (cfg.rest_port.empty() ? "<default>" : cfg.rest_port) << "\n"
-            << "  rest_path  = " << (cfg.rest_path.empty() ? "<default>" : cfg.rest_path) << "\n";
+            << "  rest_path  = " << (cfg.rest_path.empty() ? "<default>" : cfg.rest_path) << "\n"
+            << "  persist    = " << (cfg.persist_path.empty() ? "<disabled>" : cfg.persist_path) << "\n"
+            << "  persist_book_every_updates = " << cfg.persist_book_every_updates << "\n"
+            << "  persist_book_top           = " << cfg.persist_book_top << "\n";
 
     // ---------------------------------------------------------------------
     // 5) Run

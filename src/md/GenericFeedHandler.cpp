@@ -23,6 +23,11 @@ namespace md {
         return std::to_string(ms);
     }
 
+    std::int64_t GenericFeedHandler::now_ns_() noexcept {
+        const auto now = std::chrono::system_clock::now().time_since_epoch();
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+    }
+
     GenericFeedHandler::AnyAdapter GenericFeedHandler::makeAdapter(VenueId v) {
         switch (v) {
             case VenueId::BINANCE: return BinanceAdapter{};
@@ -65,6 +70,22 @@ namespace md {
         controller_->setAllowSequenceGap(rt_.caps.allow_seq_gap);
         if (rt_.caps.allow_seq_gap) {
             std::cerr << "[GenericFeedHandler] ALLOW_SEQ_GAP enabled for venue\n";
+        }
+
+        persist_.reset();
+        persist_book_every_updates_ = 0;
+        persist_book_top_ = 0;
+        updates_since_book_persist_ = 0;
+        if (!cfg_.persist_path.empty()) {
+            persist_ = std::make_unique<FilePersistSink>(cfg_.persist_path, to_string(rt_.venue), cfg_.symbol);
+            if (!persist_->is_open()) {
+                std::cerr << "[GenericFeedHandler] WARN: failed to open persistence sink at " << cfg_.persist_path << "\n";
+                persist_.reset();
+            } else {
+                std::cerr << "[GenericFeedHandler] persistence enabled: " << cfg_.persist_path << "\n";
+                persist_book_every_updates_ = cfg_.persist_book_every_updates;
+                persist_book_top_ = cfg_.persist_book_top > 0 ? cfg_.persist_book_top : rt_.depth;
+            }
         }
 
         buffer_.clear();
@@ -110,6 +131,10 @@ namespace md {
         buffer_.clear();
 
         if (controller_) controller_->resetBook();
+        persist_.reset();
+        persist_book_every_updates_ = 0;
+        persist_book_top_ = 0;
+        updates_since_book_persist_ = 0;
         return Status::OK;
     }
 
@@ -191,6 +216,7 @@ namespace md {
 
     void GenericFeedHandler::onSnapshotResponse(std::string_view body) {
         if (!running_.load()) return;
+        const std::int64_t recv_ts_ns = now_ns_();
 
         GenericSnapshotFormat snap;
         const bool ok = std::visit([&](auto const &a) {
@@ -201,6 +227,9 @@ namespace md {
             restartSync();
             return;
         }
+        snap.ts_recv_ns = recv_ts_ns;
+
+        persist_snapshot_(snap, "rest_snapshot");
 
         const auto kind =
                 (rt_.caps.sync_mode == SyncMode::RestAnchored)
@@ -208,6 +237,7 @@ namespace md {
                     : OrderBookController::BaselineKind::WsAuthoritative;
 
         controller_->onSnapshot(snap, kind);
+        maybe_persist_book_("snapshot_applied");
 
         /// Baseline loaded. We are not necessarily synced yet (RestAnchored must bridge).
         state_ = SyncState::WAIT_BRIDGE;
@@ -227,34 +257,38 @@ namespace md {
         while (!buffer_.empty()) {
             GenericIncrementalFormat inc;
 
-            const std::string &msg = buffer_.front();
+            const BufferedMsg buffered = std::move(buffer_.front());
 
             const bool ok = std::visit([&](auto const &a) {
-                if (!a.isIncremental(msg)) return false;
-                return a.parseIncremental(msg, inc);
+                if (!a.isIncremental(buffered.payload)) return false;
+                return a.parseIncremental(buffered.payload, inc);
             }, adapter_);
 
             buffer_.pop_front();
 
             if (!ok) continue;
+            inc.ts_recv_ns = buffered.recv_ts_ns;
 
             const auto action = controller_->onIncrement(inc);
+            persist_incremental_(inc, "ws_incremental");
             if (action == OrderBookController::Action::NeedResync) {
                 restartSync();
                 return;
             }
+            maybe_persist_book_("incremental_applied");
         }
     }
 
     void GenericFeedHandler::onWSMessage(const char *data, std::size_t len) {
         if (!running_.load() || len == 0) return;
         std::string_view msg{data, len};
+        const std::int64_t recv_ts_ns = now_ns_();
 
         if (state_ == SyncState::WAIT_REST_SNAPSHOT) {
             // buffer incrementals
             const bool isInc = std::visit([&](auto const &a) { return a.isIncremental(msg); }, adapter_);
             if (isInc) {
-                if (buffer_.size() < max_buffer_) buffer_.emplace_back(msg);
+                if (buffer_.size() < max_buffer_) buffer_.push_back(BufferedMsg{std::string(msg), recv_ts_ns});
                 else restartSync();
             }
             return;
@@ -268,7 +302,10 @@ namespace md {
             }, adapter_);
 
             if (isSnap) {
+                snap.ts_recv_ns = recv_ts_ns;
+                persist_snapshot_(snap, "ws_snapshot");
                 controller_->onSnapshot(snap, OrderBookController::BaselineKind::WsAuthoritative);
+                maybe_persist_book_("snapshot_applied");
 
                 // baseline is WS snapshot; any buffered msgs were pre-baseline, drain them now
                 state_ = SyncState::WAIT_BRIDGE;
@@ -280,7 +317,7 @@ namespace md {
             // otherwise buffer incrementals
             const bool isInc = std::visit([&](auto const &a) { return a.isIncremental(msg); }, adapter_);
             if (isInc) {
-                if (buffer_.size() < max_buffer_) buffer_.emplace_back(msg);
+                if (buffer_.size() < max_buffer_) buffer_.push_back(BufferedMsg{std::string(msg), recv_ts_ns});
                 else restartSync();
             }
             return;
@@ -296,7 +333,10 @@ namespace md {
 
             if (isSnap) {
                 // Hard re-baseline (venue may resend snapshot on internal resync)
+                snap.ts_recv_ns = recv_ts_ns;
+                persist_snapshot_(snap, "ws_snapshot");
                 controller_->onSnapshot(snap, OrderBookController::BaselineKind::WsAuthoritative);
+                maybe_persist_book_("snapshot_applied");
 
                 // Any buffered incrementals are stale relative to this new baseline.
                 buffer_.clear();
@@ -315,7 +355,7 @@ namespace md {
                 const bool isInc = std::visit([&](auto const &a) { return a.isIncremental(msg); }, adapter_);
                 if (!isInc) return;
 
-                if (buffer_.size() < max_buffer_) buffer_.emplace_back(msg);
+                if (buffer_.size() < max_buffer_) buffer_.push_back(BufferedMsg{std::string(msg), recv_ts_ns});
                 else {
                     restartSync();
                     return;
@@ -338,12 +378,15 @@ namespace md {
             }, adapter_);
 
             if (!ok) return;
+            inc.ts_recv_ns = recv_ts_ns;
 
             const auto action = controller_->onIncrement(inc);
+            persist_incremental_(inc, "ws_incremental");
             if (action == OrderBookController::Action::NeedResync) {
                 restartSync();
                 return;
             }
+            maybe_persist_book_("incremental_applied");
 
             if (state_ == SyncState::WAIT_BRIDGE && controller_->isSynced()) {
                 std::cerr << "[GenericFeedHandler] bridged (ws path) -> SYNCED\n";
@@ -456,5 +499,31 @@ namespace md {
                 connectWS();
             }
         });
+    }
+
+    void GenericFeedHandler::persist_snapshot_(const GenericSnapshotFormat &snap, std::string_view source) {
+        if (!persist_) return;
+        persist_->write_snapshot(snap, source);
+    }
+
+    void GenericFeedHandler::persist_incremental_(const GenericIncrementalFormat &inc, std::string_view source) {
+        if (!persist_) return;
+        persist_->write_incremental(inc, source);
+    }
+
+    void GenericFeedHandler::maybe_persist_book_(std::string_view source) {
+        if (!persist_ || !controller_) return;
+        if (persist_book_every_updates_ == 0 || persist_book_top_ == 0) return;
+        if (!controller_->isSynced()) return;
+
+        ++updates_since_book_persist_;
+        if (updates_since_book_persist_ < persist_book_every_updates_) return;
+        updates_since_book_persist_ = 0;
+
+        persist_->write_book_state(controller_->book(),
+                                   controller_->getAppliedSeqID(),
+                                   persist_book_top_,
+                                   source,
+                                   now_ns_());
     }
 }

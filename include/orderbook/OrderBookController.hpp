@@ -9,6 +9,7 @@ struct GenericIncrementalFormat {
     std::uint64_t first_seq{0};
     std::uint64_t last_seq{0};
     std::uint64_t prev_last{0};
+    std::int64_t ts_recv_ns{0}; // local receive timestamp at ingestion point
 
     std::int64_t checksum{0};
 
@@ -17,6 +18,7 @@ struct GenericIncrementalFormat {
 
     void reset() noexcept {
         first_seq = last_seq = prev_last = 0;
+        ts_recv_ns = 0;
         checksum = 0;
         bids.clear();
         asks.clear();
@@ -25,6 +27,7 @@ struct GenericIncrementalFormat {
 
 struct GenericSnapshotFormat {
     std::uint64_t lastUpdateId{0};
+    std::int64_t ts_recv_ns{0}; // local receive timestamp at ingestion point
 
     std::int64_t checksum{0};
 
@@ -33,6 +36,7 @@ struct GenericSnapshotFormat {
 
     void reset() noexcept {
         lastUpdateId = 0;
+        ts_recv_ns = 0;
         checksum = 0;
         bids.clear();
         asks.clear();

@@ -21,6 +21,9 @@ struct CmdOptions {
     std::optional<std::string> rest_host; // override or std::nullopt
     std::optional<std::string> rest_port; // override or std::nullopt
     std::optional<std::string> rest_path; // override or std::nullopt
+    std::optional<std::string> persist_path; // optional JSONL persistence file
+    int persist_book_every_updates{0}; // 0 = disabled
+    int persist_book_top{50}; // top N levels per side
 
     // Debug flags
     bool debug{false};
@@ -74,6 +77,12 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
              "Optional REST port override")
             ("rest_path", po::value<std::string>(),
              "Optional REST path override")
+            ("persist_path", po::value<std::string>(),
+             "Optional persistence output file path (JSONL)")
+            ("persist_book_every_updates", po::value<int>()->default_value(0),
+             "Persist orderbook checkpoint every N applied updates (0 disables)")
+            ("persist_book_top", po::value<int>()->default_value(50),
+             "Orderbook checkpoint top N levels per side")
             ("debug", po::bool_switch()->default_value(false),
              "Enable debug logging (rate-limited)")
             ("debug_raw", po::bool_switch()->default_value(false),
@@ -99,6 +108,8 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
                     << "[--depthLevel N] "
                     << "[--ws_host HOST] [--ws_port PORT] [--ws_path PATH] "
                     << "[--rest_host HOST] [--rest_port PORT] [--rest_path PATH] "
+                    << "[--persist_path FILE] "
+                    << "[--persist_book_every_updates N] [--persist_book_top N] "
                     << "[--debug --debug_raw --debug_every N --debug_top N]\n\n";
             std::cout << desc << "\n";
             out.show_help = true;
@@ -123,6 +134,9 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
     if (vm.count("rest_host")) out.rest_host = vm["rest_host"].as<std::string>();
     if (vm.count("rest_port")) out.rest_port = vm["rest_port"].as<std::string>();
     if (vm.count("rest_path")) out.rest_path = vm["rest_path"].as<std::string>();
+    if (vm.count("persist_path")) out.persist_path = vm["persist_path"].as<std::string>();
+    out.persist_book_every_updates = std::max(0, vm["persist_book_every_updates"].as<int>());
+    out.persist_book_top = std::max(1, vm["persist_book_top"].as<int>());
 
     /// DEBUG
     out.debug = vm["debug"].as<bool>();
