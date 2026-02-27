@@ -1,4 +1,3 @@
-// --- include Boost first so your macro can't corrupt Boost headers ---
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/ssl.hpp>
@@ -8,20 +7,10 @@
 #include <boost/beast/http/fields.hpp>     // IMPORTANT: this is where your error originates
 #include <boost/beast/websocket.hpp>
 
-// Your other headers that may include Boost should also be above the macro:
 #include "CmdLine.hpp"
 #include "abstract/FeedHandler.hpp"
-#include "utils/VenueUtils.hpp"
-
-// / ---- DEBUG ONLY (main.cpp) ----
-// Allows main.cpp to peek into GenericFeedHandler internals for console debugging.
-// Remove when you add a proper debug interface.
-#define private public
 #include "md/GenericFeedHandler.hpp"
-#undef private
-// ---- END DEBUG ONLY ----
-
-// Now the rest of your includes (standard library etc.)
+#include "utils/VenueUtils.hpp"
 #include <chrono>
 #include <functional>
 #include <iostream>
