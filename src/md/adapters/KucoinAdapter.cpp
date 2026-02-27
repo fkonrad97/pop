@@ -12,11 +12,31 @@ namespace md {
         return j.is_number_integer() || j.is_number_unsigned() || j.is_string();
     }
 
-    static std::uint64_t as_u64(const json &j) {
-        if (j.is_string()) return static_cast<std::uint64_t>(std::stoull(j.get<std::string>()));
-        if (j.is_number_unsigned()) return j.get<std::uint64_t>();
-        if (j.is_number_integer()) return static_cast<std::uint64_t>(j.get<std::int64_t>());
-        throw std::runtime_error("as_u64: not a number/string");
+    static bool as_u64(const json &j, std::uint64_t &out) noexcept {
+        try {
+            if (j.is_string()) {
+                const std::string s = j.get<std::string>();
+                if (s.empty() || s[0] == '-') return false;
+                std::size_t pos = 0;
+                const auto v = std::stoull(s, &pos);
+                if (pos != s.size()) return false;
+                out = v;
+                return true;
+            }
+            if (j.is_number_unsigned()) {
+                out = j.get<std::uint64_t>();
+                return true;
+            }
+            if (j.is_number_integer()) {
+                const auto v = j.get<std::int64_t>();
+                if (v < 0) return false;
+                out = static_cast<std::uint64_t>(v);
+                return true;
+            }
+            return false;
+        } catch (...) {
+            return false;
+        }
     }
 
     static void parseLevels2col(const json &arr, std::vector<Level> &out) {
@@ -235,7 +255,7 @@ namespace md {
 
         // data.sequence can be string (commonly) — be defensive
         if (!d.contains("sequence") || !is_num_or_str(d["sequence"])) return false;
-        out.lastUpdateId = as_u64(d["sequence"]);
+        if (!as_u64(d["sequence"], out.lastUpdateId)) return false;
 
         if (d.contains("bids")) parseLevels2col(d["bids"], out.bids);
         if (d.contains("asks")) parseLevels2col(d["asks"], out.asks);
@@ -280,8 +300,8 @@ namespace md {
         if (!d.contains("sequenceStart") || !d.contains("sequenceEnd")) return false;
         if (!is_num_or_str(d["sequenceStart"]) || !is_num_or_str(d["sequenceEnd"])) return false;
 
-        out.first_seq = as_u64(d["sequenceStart"]);
-        out.last_seq = as_u64(d["sequenceEnd"]);
+        if (!as_u64(d["sequenceStart"], out.first_seq)) return false;
+        if (!as_u64(d["sequenceEnd"], out.last_seq)) return false;
         out.prev_last = (out.first_seq > 0) ? (out.first_seq - 1) : 0;
 
         if (!d.contains("changes")) return false;
