@@ -68,7 +68,7 @@ namespace md {
             NeedResync
         };
 
-        enum class SyncState : std::uint8_t {
+        enum class BookSyncState : std::uint8_t {
             WaitingSnapshot,
             WaitingBridge, // have snapshot, waiting for bridging incremental (RestAnchored)
             Synced
@@ -88,7 +88,7 @@ namespace md {
 
         void resetBook() {
             book_.clear();
-            state_ = SyncState::WaitingSnapshot;
+            state_ = BookSyncState::WaitingSnapshot;
             last_seq_ = 0;
             expected_seq_ = 0;
         }
@@ -99,13 +99,13 @@ namespace md {
          * 'isSynced' indicates whether the order book is currently synchronized with the exchange data feed.
          */
         [[nodiscard]] bool isSynced() const noexcept {
-            return state_ == SyncState::Synced;
+            return state_ == BookSyncState::Synced;
         }
 
         /**
          * 'getSyncState' retrieves the current synchronization state of the order book.
          */
-        SyncState getSyncState() const noexcept { return state_; }
+        BookSyncState getSyncState() const noexcept { return state_; }
 
         /**
          * 'getAppliedSeqID' retrieves the last sequence ID that has been successfully applied to the order book.
@@ -114,8 +114,15 @@ namespace md {
         [[nodiscard]] std::uint64_t getAppliedSeqID() const noexcept { return last_seq_; }
 
     private:
+        static const char *book_sync_state_to_string_(BookSyncState state) noexcept;
+        void set_state_(BookSyncState next, std::string_view reason) noexcept;
+        Action need_resync_(std::string_view reason,
+                            std::uint64_t first_seq = 0,
+                            std::uint64_t last_seq = 0,
+                            std::uint64_t expected_seq = 0);
+
         OrderBook book_;
-        SyncState state_{SyncState::WaitingSnapshot};
+        BookSyncState state_{BookSyncState::WaitingSnapshot};
 
         std::uint64_t last_seq_{0};
         std::uint64_t expected_seq_{0}; // next expected first_seq for continuous stream

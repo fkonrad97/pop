@@ -10,6 +10,7 @@
 #include "CmdLine.hpp"
 #include "abstract/FeedHandler.hpp"
 #include "md/GenericFeedHandler.hpp"
+#include "utils/ProcessLoggingUtils.hpp"
 #include "utils/VenueUtils.hpp"
 #include <chrono>
 #include <functional>
@@ -53,6 +54,16 @@ int main(int argc, char **argv) {
     }
     if (options.show_help) {
         return 0;
+    }
+
+    std::optional<md::logging::ProcessLogSession> log_session;
+    if (options.log_path && !options.log_path->empty()) {
+        log_session = md::logging::enable_process_file_logging(*options.log_path);
+        if (!log_session) {
+            std::cerr << "Error: failed to open log file for base path " << *options.log_path << "\n";
+            return 1;
+        }
+        std::cerr << "[MAIN] file logging enabled path=" << log_session->path << "\n";
     }
 
     // ---------------------------------------------------------------------
@@ -147,26 +158,12 @@ int main(int argc, char **argv) {
     auto h = std::make_unique<md::GenericFeedHandler>(ioc);
 
     auto st = h->init(cfg);
-    std::cerr << "[MAIN] init = " << (st == md::Status::OK ? "OK" : "ERROR") << "\n";
-    if (st != md::Status::OK) return 1;
+    std::cerr << "[MAIN] init = " << (st == md::FeedOpResult::OK ? "OK" : "ERROR") << "\n";
+    if (st != md::FeedOpResult::OK) return 1;
 
     st = h->start();
-    std::cerr << "[MAIN] start = " << (st == md::Status::OK ? "OK" : "ERROR") << "\n";
-    if (st != md::Status::OK) return 2;
-
-    // Heartbeat (optional)
-    auto t = std::make_shared<boost::asio::steady_timer>(ioc);
-    std::function<void()> tick;
-    tick = [t, &tick]() {
-        t->expires_after(std::chrono::seconds(1));
-        t->async_wait([t, &tick](const boost::system::error_code &ec) {
-            if (!ec) {
-                std::cerr << "[MAIN] heartbeat\n";
-                tick();
-            }
-        });
-    };
-    tick();
+    std::cerr << "[MAIN] start = " << (st == md::FeedOpResult::OK ? "OK" : "ERROR") << "\n";
+    if (st != md::FeedOpResult::OK) return 2;
 
     ioc.run();
     return 0;

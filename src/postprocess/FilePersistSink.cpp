@@ -4,6 +4,14 @@
 #include <filesystem>
 
 namespace md {
+    namespace {
+        bool has_gzip_suffix(const std::string &path) {
+            constexpr std::string_view suffix = ".gz";
+            return path.size() >= suffix.size()
+                   && std::string_view(path).substr(path.size() - suffix.size()) == suffix;
+        }
+    }
+
     FilePersistSink::FilePersistSink(std::string path, std::string venue, std::string symbol)
         : path_(std::move(path)),
           venue_(std::move(venue)),
@@ -13,15 +21,30 @@ namespace md {
             if (p.has_parent_path()) {
                 std::filesystem::create_directories(p.parent_path());
             }
-            out_.open(path_, std::ios::out | std::ios::app);
+            if (use_gzip_()) {
+                gz_out_ = gzopen(path_.c_str(), "ab");
+            } else {
+                out_.open(path_, std::ios::out | std::ios::app);
+            }
         } catch (...) {
             // Keep sink disabled if path setup/open fails.
+        }
+    }
+
+    FilePersistSink::~FilePersistSink() {
+        if (gz_out_ != nullptr) {
+            gzclose(gz_out_);
+            gz_out_ = nullptr;
         }
     }
 
     std::int64_t FilePersistSink::now_ns_() noexcept {
         const auto now = std::chrono::system_clock::now().time_since_epoch();
         return std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+    }
+
+    bool FilePersistSink::use_gzip_() const noexcept {
+        return has_gzip_suffix(path_);
     }
 
     nlohmann::json FilePersistSink::levels_to_json_(const std::vector<Level> &levels) {
@@ -53,9 +76,19 @@ namespace md {
     }
 
     void FilePersistSink::write_line_(const nlohmann::json &j) noexcept {
-        if (!out_.is_open()) return;
         try {
-            out_ << j.dump() << '\n';
+            const std::string line = j.dump() + '\n';
+
+            if (gz_out_ != nullptr) {
+                const int rc = gzwrite(gz_out_, line.data(), static_cast<unsigned int>(line.size()));
+                if (rc > 0) {
+                    gzflush(gz_out_, Z_SYNC_FLUSH);
+                }
+                return;
+            }
+
+            if (!out_.is_open()) return;
+            out_ << line;
             out_.flush();
         } catch (...) {
             // If writes fail, keep the feed alive; persistence is best-effort for now.

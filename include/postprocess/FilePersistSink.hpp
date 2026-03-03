@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include <nlohmann/json.hpp>
+#include <zlib.h>
 
 #include "orderbook/OrderBookController.hpp"
 
@@ -14,8 +15,9 @@ namespace md {
     class FilePersistSink {
     public:
         FilePersistSink(std::string path, std::string venue, std::string symbol);
+        ~FilePersistSink();
 
-        [[nodiscard]] bool is_open() const noexcept { return out_.is_open(); }
+        [[nodiscard]] bool is_open() const noexcept { return out_.is_open() || gz_out_ != nullptr; }
 
         void write_snapshot(const GenericSnapshotFormat &snap, std::string_view source) noexcept;
         void write_incremental(const GenericIncrementalFormat &inc, std::string_view source) noexcept;
@@ -30,9 +32,11 @@ namespace md {
         static nlohmann::json levels_to_json_(const std::vector<Level> &levels);
         static nlohmann::json levels_from_book_(const OrderBook &book, std::size_t top_n, Side side);
         void write_line_(const nlohmann::json &j) noexcept;
+        [[nodiscard]] bool use_gzip_() const noexcept;
 
     private:
         std::ofstream out_;
+        gzFile gz_out_{nullptr};
         std::string path_;
         std::string venue_;
         std::string symbol_;

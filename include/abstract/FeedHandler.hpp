@@ -5,23 +5,14 @@
 
 namespace md {
     /**
-     * @brief Return code for feed operations.
+     * @brief Result of a feed lifecycle API call.
      *
-     * Semantics:
-     *  - OK    : Operation was accepted and enqueued (for async ops), or completed successfully (for sync ops).
-     *  - ERROR : Precondition failed (e.g., already started), invalid config, or immediate failure to enqueue.
-     *
-     * Note: For async chains, detailed errors should be reported via logs/callbacks, not just this enum.
+     * This is intentionally limited to immediate call success/failure.
+     * It does not describe the live runtime state of the feed after start.
      */
-    enum class Status {
+    enum class FeedOpResult {
         OK,
-        ERROR,
-        HEALTHY,
-        DEGRADED,
-        DISCONNECTED,
-        RESYNCED,
-        SYNCHING,
-        CLOSED
+        ERROR
     };
 
     enum class VenueId { BINANCE, OKX, BYBIT, BITGET, KUCOIN, UNKNOWN };
@@ -83,12 +74,12 @@ namespace md {
         virtual ~IVenueFeedHandler() = default;
 
         /// Prepare resources and validate configuration. Should NOT block on network.
-        virtual Status init(const FeedHandlerConfig &) = 0;
+        virtual FeedOpResult init(const FeedHandlerConfig &) = 0;
 
         /// Enqueue the async network chain on the (externally-driven) io_context.
-        virtual Status start() = 0;
+        virtual FeedOpResult start() = 0;
 
         /// Gracefully stop: close sockets and cancel timers. Safe to call multiple times.
-        virtual Status stop() = 0;
+        virtual FeedOpResult stop() = 0;
     };
 } // namespace md

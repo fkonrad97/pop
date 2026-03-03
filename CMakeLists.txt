@@ -21,6 +21,7 @@ include(FetchContent)
 
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
+find_package(ZLIB REQUIRED)
 
 # Boost (Beast/Asio + program_options for your CmdLine)
 set(Boost_USE_STATIC_LIBS OFF)
@@ -77,6 +78,7 @@ target_link_libraries(pop_core
         OpenSSL::SSL
         OpenSSL::Crypto
         Threads::Threads
+        ZLIB::ZLIB
         nlohmann_json::nlohmann_json
 )
 
