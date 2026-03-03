@@ -14,9 +14,13 @@ namespace md {
         c.ws_sends_snapshot = true;
 
         c.has_checksum = true;
-        // TODO: Revisit snapshot checksum strictness for Bitget. In practice,
-        // enforcing snapshot checksum as a hard resync gate caused unstable
-        // WS behavior; keep incremental checksum validation as primary guard for now.
+        // TODO(bitget): Bitget WS snapshot sync is currently not production-ready.
+        // Recent runs show the initial WS snapshot can arrive without a usable
+        // checksum, which causes the generic controller to reject the baseline
+        // and the venue to churn in resync. Keep moving with the other venues
+        // for arbitrage validation and revisit Bitget with a venue-specific
+        // baseline/checksum policy. Incremental checksum validation should
+        // remain the primary integrity guard once the baseline policy is fixed.
         c.checksum_fn = &checkBitgetCRC32;
         c.checksum_top_n = 25;
 
