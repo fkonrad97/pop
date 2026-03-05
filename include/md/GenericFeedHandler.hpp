@@ -6,34 +6,73 @@
 #include <variant>
 #include <atomic>
 #include <string_view>
+#include <cstdint>
 
 #include "abstract/FeedHandler.hpp"
 #include "client_connection_handlers/WsClient.hpp"
 #include "client_connection_handlers/RestClient.hpp"
 #include "orderbook/OrderBookController.hpp"
 #include "md/VenueAdapter.hpp"
+#include "postprocess/FilePersistSink.hpp"
 
 namespace md {
+    /**
+     * @brief Venue-agnostic feed orchestrator built on top of the adapter layer.
+     *
+     * Responsibilities:
+     *  - resolve venue-specific endpoints and subscription frames from the selected adapter
+     *  - establish and maintain REST/WS connectivity
+     *  - drive snapshot + incremental synchronization into `OrderBookController`
+     *  - persist normalized events/checkpoints when configured
+     *  - recover from disconnects, parse/apply failures, and stale silent sockets
+     *
+     * Design notes:
+     *  - hot-path message parsing stays adapter-specific
+     *  - sync/reconnect/watchdog policy stays centralized here
+     *  - one instance manages exactly one `(venue, symbol)` feed
+     *
+     * High-level flow:
+     *  1. `init(cfg)` selects the adapter and resolves cold-path runtime data.
+     *  2. `start()` connects WS directly or performs venue bootstrap first.
+     *  3. snapshot/incremental events are normalized and applied to the controller.
+     *  4. if continuity/checksum/watchdog fails, `restartSync()` resets local state and reconnects.
+     */
     class GenericFeedHandler final : public IVenueFeedHandler {
     public:
+        /// Construct the handler on an externally owned `io_context`.
         explicit GenericFeedHandler(boost::asio::io_context &ioc);
 
-        Status init(const FeedHandlerConfig &cfg) override;
+        /**
+         * @brief Prepare adapter/runtime state for one venue feed.
+         *
+         * This is a cold-path setup step. It does not perform network I/O.
+         */
+        FeedOpResult init(const FeedHandlerConfig &cfg) override;
 
-        Status start() override;
+        /**
+         * @brief Start the async feed lifecycle.
+         *
+         * Depending on venue capabilities this either:
+         *  - connects directly to the websocket, or
+         *  - performs an HTTP bootstrap first (e.g. KuCoin).
+         */
+        FeedOpResult start() override;
 
-        Status stop() override;
+        /// Stop sockets/timers and reset runtime state.
+        FeedOpResult stop() override;
 
-        /// private methods:
     private:
-        /// Adapter Selection
+        /// Concrete adapter selected from `FeedHandlerConfig::venue_name`.
         using AnyAdapter = std::variant<BinanceAdapter, OKXAdapter, BitgetAdapter, BybitAdapter, KucoinAdapter>;
 
         static AnyAdapter makeAdapter(VenueId v);
 
-        std::uint64_t ws_seen_ = 0; /// Temporary - delete later
-
-        /// Cold-path resolved runtime (no config reads in hot path):
+        /**
+         * Runtime values resolved once during `init()`.
+         *
+         * This avoids re-reading config or recomputing venue-specific details in
+         * the message hot path.
+         */
         struct RuntimeResolved {
             VenueId venue{};
             std::size_t depth{0};
@@ -46,12 +85,24 @@ namespace md {
 
             VenueCaps caps;
 
-            int ws_ping_interval_ms{0};
-            int ws_ping_timeout_ms{0};
+            int ws_ping_interval_ms{0}; ///< app-level websocket ping cadence
+            int ws_ping_timeout_ms{0}; ///< venue-provided ping timeout hint if available
+            int ws_stale_after_ms{0}; ///< no-message threshold before forced resync
         };
 
-        /// Sync state machine:
-        enum class SyncState : std::uint8_t {
+        /**
+         * Synchronization state machine for one venue stream.
+         *
+         * Rest-anchored venues:
+         *  CONNECTING -> WAIT_REST_SNAPSHOT -> WAIT_BRIDGE -> SYNCED
+         *
+         * WS-authoritative venues:
+         *  CONNECTING -> WAIT_WS_SNAPSHOT -> WAIT_BRIDGE/SYNCED
+         *
+         * `WAIT_BRIDGE` means a baseline exists but the controller is not yet
+         * ready to accept the stream as synchronized.
+         */
+        enum class FeedSyncState : std::uint8_t {
             DISCONNECTED,
             CONNECTING,
             BOOTSTRAPPING,
@@ -63,27 +114,55 @@ namespace md {
             SYNCED
         };
 
+        /// Open the websocket using the already resolved runtime endpoint.
         void connectWS();
 
+        /// Send the subscribe frame and transition into the venue's sync mode.
         void onWSOpen();
 
+        /// Main raw websocket message entry point.
         void onWSMessage(const char *data, std::size_t len);
 
+        /// Request REST snapshot for rest-anchored venues.
         void requestSnapshot();
 
+        /// Parse/apply REST snapshot and attempt buffered bridge.
         void onSnapshotResponse(std::string_view body);
 
-        void restartSync();
+        /// Reset local sync state and schedule reconnect/rebootstrap.
+        void restartSync(std::string_view reason);
 
+        /// Drain buffered incrementals through the normal apply path.
         void drainBufferedIncrementals();
 
+        /// Perform venue-specific bootstrap before websocket connect if required.
         void bootstrapWS();
 
         std::string makeConnectId() const;
+        static std::int64_t now_ns_() noexcept;
+        static const char *sync_state_to_string_(FeedSyncState state) noexcept;
+        void set_state_(FeedSyncState next, std::string_view reason);
 
+        /// Handle websocket close callback and decide whether to resync.
         void onWSClose_();
 
+        /// Schedule the next connect attempt after a controlled delay.
         void schedule_ws_reconnect_(std::chrono::milliseconds delay);
+
+        /**
+         * Refresh the silent-socket watchdog.
+         *
+         * The watchdog detects the "process still alive but feed stopped moving"
+         * failure mode where no close/error event is delivered by the socket.
+         */
+        void arm_ws_watchdog_();
+
+        /// Cancel any outstanding stale-feed watchdog callback.
+        void disarm_ws_watchdog_();
+
+        void persist_snapshot_(const GenericSnapshotFormat &snap, std::string_view source);
+        void persist_incremental_(const GenericIncrementalFormat &inc, std::string_view source);
+        void maybe_persist_book_(std::string_view source);
 
     private:
         boost::asio::io_context &ioc_;
@@ -93,21 +172,33 @@ namespace md {
         std::string connect_id_;
 
         std::unique_ptr<OrderBookController> controller_;
+        std::unique_ptr<FilePersistSink> persist_;
 
         FeedHandlerConfig cfg_; /// DO NOT READ IN HOT PATH
         RuntimeResolved rt_;
         AnyAdapter adapter_;
 
         std::atomic<bool> running_{false};
-        SyncState state_{SyncState::DISCONNECTED};
+        FeedSyncState state_{FeedSyncState::DISCONNECTED};
 
-        /// Incremental buffer during snapshot syncing
-        std::deque<std::string> buffer_; /// later optimize to ring buffer / pooled storage
+        /// Buffered incrementals captured before a valid baseline is ready.
+        struct BufferedMsg {
+            std::string payload;
+            std::int64_t recv_ts_ns{0};
+        };
+        std::deque<BufferedMsg> buffer_; /// later optimize to ring buffer / pooled storage
         std::size_t max_buffer_{10'000};
 
-        boost::asio::steady_timer reconnect_timer_;
-        std::uint64_t reconnect_gen_{0};
+        boost::asio::steady_timer reconnect_timer_; ///< delayed reconnect/backoff timer
+        boost::asio::steady_timer ws_watchdog_timer_; ///< detects silent stale sockets
+        std::uint64_t reconnect_gen_{0}; ///< invalidates old reconnect callbacks
+        std::uint64_t ws_watchdog_gen_{0}; ///< invalidates old watchdog callbacks
         bool reconnect_scheduled_{false};
-        bool closing_for_restart_{false};
+        bool closing_for_restart_{false}; ///< suppresses duplicate restart on self-initiated close
+        bool ws_watchdog_announced_{false};
+        std::int64_t last_ws_message_ns_{0}; ///< last raw websocket frame receive time
+        std::size_t persist_book_every_updates_{0};
+        std::size_t persist_book_top_{0};
+        std::size_t updates_since_book_persist_{0};
     };
 }

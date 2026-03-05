@@ -48,3 +48,4 @@
 .vscode/tasks.json
 CMakePresets.json
 .vscode/settings.json
+persist/*

@@ -4,9 +4,55 @@
 #include <iostream>
 
 namespace md {
+    const char *OrderBookController::book_sync_state_to_string_(BookSyncState state) noexcept {
+        switch (state) {
+            case BookSyncState::WaitingSnapshot: return "WaitingSnapshot";
+            case BookSyncState::WaitingBridge: return "WaitingBridge";
+            case BookSyncState::Synced: return "Synced";
+            default: return "Unknown";
+        }
+    }
+
+    void OrderBookController::set_state_(BookSyncState next, std::string_view reason) noexcept {
+        if (state_ == next) return;
+        std::cerr << "[OrderBookController] state "
+                  << book_sync_state_to_string_(state_)
+                  << " -> " << book_sync_state_to_string_(next);
+        if (!reason.empty()) {
+            std::cerr << " reason=" << reason;
+        }
+        std::cerr << "\n";
+        state_ = next;
+    }
+
+    OrderBookController::Action OrderBookController::need_resync_(std::string_view reason,
+                                                                  std::uint64_t first_seq,
+                                                                  std::uint64_t last_seq,
+                                                                  std::uint64_t expected_seq) {
+        std::cerr << "[OrderBookController] need resync"
+                  << " state=" << book_sync_state_to_string_(state_);
+        if (!reason.empty()) {
+            std::cerr << " reason=" << reason;
+        }
+        if (first_seq != 0 || last_seq != 0 || expected_seq != 0) {
+            std::cerr << " first_seq=" << first_seq
+                      << " last_seq=" << last_seq
+                      << " expected_seq=" << expected_seq;
+        }
+        std::cerr << "\n";
+        resetBook();
+        return Action::NeedResync;
+    }
+
     OrderBookController::Action
     OrderBookController::onSnapshot(const GenericSnapshotFormat &msg, BaselineKind kind) {
         resetBook();
+        std::cerr << "[OrderBookController] applying snapshot"
+                  << " baseline=" << (kind == BaselineKind::WsAuthoritative ? "ws_authoritative" : "rest_anchored")
+                  << " seq=" << msg.lastUpdateId
+                  << " bids=" << msg.bids.size()
+                  << " asks=" << msg.asks.size()
+                  << "\n";
 
         std::vector<Level> bids = msg.bids;
         std::vector<Level> asks = msg.asks;
@@ -28,25 +74,24 @@ namespace md {
         // If checksum is enabled, require it to be present and correct.
         if (checksum_enabled) {
             if (msg.checksum == 0) {
-                resetBook();
-                return Action::NeedResync;
+                return need_resync_("snapshot_missing_checksum");
             }
             if (!validateChecksum(msg.checksum)) {
-                resetBook();
-                return Action::NeedResync;
+                return need_resync_("snapshot_checksum_mismatch");
             }
         }
 
-        state_ = (kind == BaselineKind::WsAuthoritative)
-                     ? SyncState::Synced
-                     : SyncState::WaitingBridge;
+        set_state_((kind == BaselineKind::WsAuthoritative)
+                       ? BookSyncState::Synced
+                       : BookSyncState::WaitingBridge,
+                   "snapshot_applied");
 
         return Action::None;
     }
 
     OrderBookController::Action
     OrderBookController::onIncrement(const GenericIncrementalFormat &msg) {
-        if (state_ == SyncState::WaitingSnapshot) {
+        if (state_ == BookSyncState::WaitingSnapshot) {
             return Action::None; // handler buffers
         }
 
@@ -54,11 +99,11 @@ namespace md {
         const bool checksum_enabled = (checksum_fn_ != nullptr);
 
         if (!has_seq && !checksum_enabled) {
-            return Action::NeedResync;
+            return need_resync_("incremental_missing_seq_and_checksum");
         }
 
         // ---- Bridging phase (RestAnchored) ----
-        if (state_ == SyncState::WaitingBridge) {
+        if (state_ == BookSyncState::WaitingBridge) {
             if (has_seq) {
                 const std::uint64_t required = expected_seq_;
 
@@ -78,7 +123,7 @@ namespace md {
                     if (!allow_seq_gap_) {
                         std::cerr << "[CTRL][BRIDGE] RESYNC gap: msg.first > required ("
                                 << msg.first_seq << " > " << required << ")\n";
-                        return Action::NeedResync;
+                        return need_resync_("bridge_sequence_gap", msg.first_seq, msg.last_seq, required);
                     } else {
                         std::cerr << "[CTRL][BRIDGE] GAP tolerated (allow_seq_gap_)\n";
                         // fall through and apply below
@@ -93,26 +138,24 @@ namespace md {
                 applyIncrementUpdate(msg);
                 last_seq_ = msg.last_seq;
                 expected_seq_ = last_seq_ + 1;
-                state_ = SyncState::Synced;
+                set_state_(BookSyncState::Synced, "bridge_incremental_applied");
 
                 std::cerr << "[CTRL][BRIDGE] -> Synced last_seq_=" << last_seq_
                         << " expected_seq_=" << expected_seq_ << "\n";
             } else {
                 std::cerr << "[CTRL][BRIDGE] APPLY seq-less -> Synced\n";
                 applyIncrementUpdate(msg);
-                state_ = SyncState::Synced;
+                set_state_(BookSyncState::Synced, "bridge_seqless_incremental_applied");
             }
 
             if (checksum_enabled) {
                 if (msg.checksum == 0) {
                     std::cerr << "[CTRL][BRIDGE] RESYNC missing checksum while enabled\n";
-                    resetBook();
-                    return Action::NeedResync;
+                    return need_resync_("bridge_missing_checksum", msg.first_seq, msg.last_seq, expected_seq_);
                 }
                 if (!validateChecksum(msg.checksum)) {
                     std::cerr << "[CTRL][BRIDGE] RESYNC checksum mismatch\n";
-                    resetBook();
-                    return Action::NeedResync;
+                    return need_resync_("bridge_checksum_mismatch", msg.first_seq, msg.last_seq, expected_seq_);
                 }
             }
 
@@ -122,11 +165,18 @@ namespace md {
         // ---- Steady-state (Synced) ----
         if (has_seq) {
             const std::uint64_t required = expected_seq_;
+            std::cerr << "[OrderBookController] applying steady_state incremental"
+                      << " required_seq=" << required
+                      << " first_seq=" << msg.first_seq
+                      << " last_seq=" << msg.last_seq
+                      << " bids=" << msg.bids.size()
+                      << " asks=" << msg.asks.size()
+                      << "\n";
 
             if (msg.last_seq < required) return Action::None; // outdated
             if (msg.first_seq > required) {
                 if (!allow_seq_gap_) {
-                    return Action::NeedResync; // gap
+                    return need_resync_("steady_state_sequence_gap", msg.first_seq, msg.last_seq, required);
                 }
                 // allow_seq_gap_ == true -> tolerate gap and continue
             }
@@ -142,12 +192,10 @@ namespace md {
 
         if (checksum_enabled) {
             if (msg.checksum == 0) {
-                resetBook();
-                return Action::NeedResync;
+                return need_resync_("steady_state_missing_checksum", msg.first_seq, msg.last_seq, expected_seq_);
             }
             if (!validateChecksum(msg.checksum)) {
-                resetBook();
-                return Action::NeedResync;
+                return need_resync_("steady_state_checksum_mismatch", msg.first_seq, msg.last_seq, expected_seq_);
             }
         }
 

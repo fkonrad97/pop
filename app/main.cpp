@@ -1,4 +1,3 @@
-// --- include Boost first so your macro can't corrupt Boost headers ---
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/ssl.hpp>
@@ -8,20 +7,11 @@
 #include <boost/beast/http/fields.hpp>     // IMPORTANT: this is where your error originates
 #include <boost/beast/websocket.hpp>
 
-// Your other headers that may include Boost should also be above the macro:
 #include "CmdLine.hpp"
 #include "abstract/FeedHandler.hpp"
-#include "utils/VenueUtils.hpp"
-
-// / ---- DEBUG ONLY (main.cpp) ----
-// Allows main.cpp to peek into GenericFeedHandler internals for console debugging.
-// Remove when you add a proper debug interface.
-#define private public
 #include "md/GenericFeedHandler.hpp"
-#undef private
-// ---- END DEBUG ONLY ----
-
-// Now the rest of your includes (standard library etc.)
+#include "utils/ProcessLoggingUtils.hpp"
+#include "utils/VenueUtils.hpp"
 #include <chrono>
 #include <functional>
 #include <iostream>
@@ -66,6 +56,16 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    std::optional<md::logging::ProcessLogSession> log_session;
+    if (options.log_path && !options.log_path->empty()) {
+        log_session = md::logging::enable_process_file_logging(*options.log_path);
+        if (!log_session) {
+            std::cerr << "Error: failed to open log file for base path " << *options.log_path << "\n";
+            return 1;
+        }
+        std::cerr << "[MAIN] file logging enabled path=" << log_session->path << "\n";
+    }
+
     // ---------------------------------------------------------------------
     // 1) Validate venue + stream kind
     // ---------------------------------------------------------------------
@@ -95,6 +95,9 @@ int main(int argc, char **argv) {
     cfg.rest_host = options.rest_host.value_or("");
     cfg.rest_port = options.rest_port.value_or("");
     cfg.rest_path = options.rest_path.value_or("");
+    cfg.persist_path = options.persist_path.value_or("");
+    cfg.persist_book_every_updates = static_cast<std::size_t>(options.persist_book_every_updates);
+    cfg.persist_book_top = static_cast<std::size_t>(options.persist_book_top);
 
     /// DEBUG
     md::debug::enabled.store(options.debug, std::memory_order_relaxed);
@@ -142,7 +145,10 @@ int main(int argc, char **argv) {
             << "  ws_path    = " << (cfg.ws_path.empty() ? "<default>" : cfg.ws_path) << "\n"
             << "  rest_host  = " << (cfg.rest_host.empty() ? "<default>" : cfg.rest_host) << "\n"
             << "  rest_port  = " << (cfg.rest_port.empty() ? "<default>" : cfg.rest_port) << "\n"
-            << "  rest_path  = " << (cfg.rest_path.empty() ? "<default>" : cfg.rest_path) << "\n";
+            << "  rest_path  = " << (cfg.rest_path.empty() ? "<default>" : cfg.rest_path) << "\n"
+            << "  persist    = " << (cfg.persist_path.empty() ? "<disabled>" : cfg.persist_path) << "\n"
+            << "  persist_book_every_updates = " << cfg.persist_book_every_updates << "\n"
+            << "  persist_book_top           = " << cfg.persist_book_top << "\n";
 
     // ---------------------------------------------------------------------
     // 5) Run
@@ -152,26 +158,12 @@ int main(int argc, char **argv) {
     auto h = std::make_unique<md::GenericFeedHandler>(ioc);
 
     auto st = h->init(cfg);
-    std::cerr << "[MAIN] init = " << (st == md::Status::OK ? "OK" : "ERROR") << "\n";
-    if (st != md::Status::OK) return 1;
+    std::cerr << "[MAIN] init = " << (st == md::FeedOpResult::OK ? "OK" : "ERROR") << "\n";
+    if (st != md::FeedOpResult::OK) return 1;
 
     st = h->start();
-    std::cerr << "[MAIN] start = " << (st == md::Status::OK ? "OK" : "ERROR") << "\n";
-    if (st != md::Status::OK) return 2;
-
-    // Heartbeat (optional)
-    auto t = std::make_shared<boost::asio::steady_timer>(ioc);
-    std::function<void()> tick;
-    tick = [t, &tick]() {
-        t->expires_after(std::chrono::seconds(1));
-        t->async_wait([t, &tick](const boost::system::error_code &ec) {
-            if (!ec) {
-                std::cerr << "[MAIN] heartbeat\n";
-                tick();
-            }
-        });
-    };
-    tick();
+    std::cerr << "[MAIN] start = " << (st == md::FeedOpResult::OK ? "OK" : "ERROR") << "\n";
+    if (st != md::FeedOpResult::OK) return 2;
 
     ioc.run();
     return 0;

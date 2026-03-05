@@ -8,3 +8,4 @@ Links:
 2. Boost.Asio: https://www.boost.org/doc/libs/develop/doc/html/boost_asio/overview/rationale.html
 3. Transport Layer Security (TLS)
 4. Websocket Beast example snippet: https://www.boost.org/doc/libs/develop/libs/beast/doc/html/beast/quick_start/websocket_client.html
+5. Persistence schema: `docs/PERSISTENCE_SCHEMA.md`

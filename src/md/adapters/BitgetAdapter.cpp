@@ -14,6 +14,13 @@ namespace md {
         c.ws_sends_snapshot = true;
 
         c.has_checksum = true;
+        // TODO(bitget): Bitget WS snapshot sync is currently not production-ready.
+        // Recent runs show the initial WS snapshot can arrive without a usable
+        // checksum, which causes the generic controller to reject the baseline
+        // and the venue to churn in resync. Keep moving with the other venues
+        // for arbitrage validation and revisit Bitget with a venue-specific
+        // baseline/checksum policy. Incremental checksum validation should
+        // remain the primary integrity guard once the baseline policy is fixed.
         c.checksum_fn = &checkBitgetCRC32;
         c.checksum_top_n = 25;
 
@@ -84,7 +91,7 @@ namespace md {
         }
     }
 
-    bool BitgetAdapter::parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &out) const noexcept {
+    bool BitgetAdapter::parseWsSnapshot(std::string_view msg, GenericSnapshotFormat &out) const {
         out.reset();
 
         json j = json::parse(msg.begin(), msg.end(), nullptr, false);
@@ -142,7 +149,7 @@ namespace md {
         return true;
     }
 
-    bool BitgetAdapter::parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const noexcept {
+    bool BitgetAdapter::parseIncremental(std::string_view msg, GenericIncrementalFormat &out) const {
         out.reset();
 
         json j = json::parse(msg.begin(), msg.end(), nullptr, false);
