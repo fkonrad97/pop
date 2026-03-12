@@ -44,6 +44,14 @@ namespace md {
         void set_connect_timeout(std::chrono::milliseconds t) { connect_timeout_ = t; }
         void set_idle_ping(std::chrono::milliseconds interval) { ping_interval_ = interval; }
 
+        // TLS verification is enabled by default.
+        // For local testing with self-signed certs you can disable it.
+        void set_tls_verify_peer(bool enabled) { tls_verify_peer_ = enabled; }
+
+        // Limit number of queued outgoing messages when the socket is not writable/open.
+        // If exceeded, the oldest messages are dropped.
+        void set_max_outbox(std::size_t max) { max_outbox_ = max; }
+
         void connect(std::string host, std::string port, std::string target);
 
         void send_text(std::string text);
@@ -114,6 +122,7 @@ namespace md {
         bool opened_{false};
 
         std::deque<std::string> outbox_;
+        std::size_t max_outbox_{10'000};
         bool write_in_flight_{false};
 
         boost::asio::steady_timer connect_deadline_;
@@ -121,6 +130,8 @@ namespace md {
 
         boost::asio::steady_timer ping_timer_;
         std::chrono::milliseconds ping_interval_{0}; // 0 = disabled
+
+        bool tls_verify_peer_{true};
 
         CloseHandler on_close_;
         RawMessageHandler on_raw_message_;

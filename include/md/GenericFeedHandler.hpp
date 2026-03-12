@@ -9,11 +9,12 @@
 #include <cstdint>
 
 #include "abstract/FeedHandler.hpp"
-#include "client_connection_handlers/WsClient.hpp"
-#include "client_connection_handlers/RestClient.hpp"
+#include "connection_handler/WsClient.hpp"
+#include "connection_handler/RestClient.hpp"
 #include "orderbook/OrderBookController.hpp"
 #include "md/VenueAdapter.hpp"
 #include "postprocess/FilePersistSink.hpp"
+#include "postprocess/WsPublishSink.hpp"
 
 namespace md {
     /**
@@ -173,6 +174,7 @@ namespace md {
 
         std::unique_ptr<OrderBookController> controller_;
         std::unique_ptr<FilePersistSink> persist_;
+        std::unique_ptr<WsPublishSink> brain_publish_;
 
         FeedHandlerConfig cfg_; /// DO NOT READ IN HOT PATH
         RuntimeResolved rt_;

@@ -1,5 +1,5 @@
 // RestClient.cpp
-#include "client_connection_handlers/RestClient.hpp"
+#include "connection_handler/RestClient.hpp"
 
 #include <boost/asio/bind_executor.hpp>
 #include <boost/asio/connect.hpp>

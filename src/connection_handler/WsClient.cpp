@@ -1,4 +1,4 @@
-#include "client_connection_handlers/WsClient.hpp"
+#include "connection_handler/WsClient.hpp"
 
 #include <boost/asio/bind_executor.hpp>
 #include <boost/asio/connect.hpp>
@@ -75,22 +75,29 @@ namespace md {
                                   self->close_notified_.store(false, std::memory_order_release);
 
                                   // Configure hostname verification for this host
-                                  const std::string host_for_verify = self->host_;
-                                  self->ws_.next_layer().set_verify_mode(ssl::verify_peer);
-                                  self->ws_.next_layer().set_verify_callback(
-                                      [host_for_verify](bool preverified, ssl::verify_context &ctx) {
-                                          if (!preverified) return false;
+                                  if (self->tls_verify_peer_) {
+                                      const std::string host_for_verify = self->host_;
+                                      self->ws_.next_layer().set_verify_mode(ssl::verify_peer);
+                                      self->ws_.next_layer().set_verify_callback(
+                                          [host_for_verify](bool preverified, ssl::verify_context &ctx) {
+                                              if (!preverified) return false;
 
-                                          X509_STORE_CTX *sctx = ctx.native_handle();
-                                          if (X509_STORE_CTX_get_error_depth(sctx) != 0) return true;
+                                              X509_STORE_CTX *sctx = ctx.native_handle();
+                                              if (X509_STORE_CTX_get_error_depth(sctx) != 0) return true;
 
-                                          X509 *cert = X509_STORE_CTX_get_current_cert(sctx);
-                                          if (!cert) return false;
+                                              X509 *cert = X509_STORE_CTX_get_current_cert(sctx);
+                                              if (!cert) return false;
 
-                                          return X509_check_host(cert, host_for_verify.c_str(), host_for_verify.size(),
-                                                                 0, nullptr) == 1;
-                                      }
-                                  );
+                                              return X509_check_host(cert,
+                                                                     host_for_verify.c_str(),
+                                                                     host_for_verify.size(),
+                                                                     0,
+                                                                     nullptr) == 1;
+                                          }
+                                      );
+                                  } else {
+                                      self->ws_.next_layer().set_verify_mode(ssl::verify_none);
+                                  }
 
                                   self->arm_connect_deadline_();
                                   self->do_resolve_();
@@ -222,6 +229,10 @@ namespace md {
         boost::asio::dispatch(strand_, [self, text = std::move(text)]() mutable {
             if (self->closing_) return;
 
+            if (self->max_outbox_ == 0) return;
+            while (self->outbox_.size() >= self->max_outbox_) {
+                self->outbox_.pop_front();
+            }
             self->outbox_.push_back(std::move(text));
             if (self->opened_) self->start_write_();
         });

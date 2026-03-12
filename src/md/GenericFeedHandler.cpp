@@ -145,8 +145,9 @@ namespace md
         }
 
         persist_.reset();
-        persist_book_every_updates_ = 0;
-        persist_book_top_ = 0;
+        // Book checkpoint cadence is shared by file persistence and brain publishing.
+        persist_book_every_updates_ = cfg_.persist_book_every_updates;
+        persist_book_top_ = cfg_.persist_book_top > 0 ? cfg_.persist_book_top : rt_.depth;
         updates_since_book_persist_ = 0;
         if (!cfg_.persist_path.empty())
         {
@@ -159,9 +160,24 @@ namespace md
             else
             {
                 std::cerr << "[GenericFeedHandler] persistence enabled: " << cfg_.persist_path << "\n";
-                persist_book_every_updates_ = cfg_.persist_book_every_updates;
-                persist_book_top_ = cfg_.persist_book_top > 0 ? cfg_.persist_book_top : rt_.depth;
+                // cadence already populated above
             }
+        }
+
+        brain_publish_.reset();
+        if (!cfg_.brain_ws_host.empty())
+        {
+            const std::string host = cfg_.brain_ws_host;
+            const std::string port = cfg_.brain_ws_port.empty() ? "443" : cfg_.brain_ws_port;
+            const std::string path = cfg_.brain_ws_path.empty() ? "/" : cfg_.brain_ws_path;
+            brain_publish_ = std::make_unique<WsPublishSink>(ioc_,
+                                                            host,
+                                                            port,
+                                                            path,
+                                                            cfg_.brain_ws_insecure,
+                                                            to_string(rt_.venue),
+                                                            cfg_.symbol);
+            std::cerr << "[GenericFeedHandler] brain publish enabled: " << host << ":" << port << path << "\n";
         }
 
         buffer_.clear();
@@ -203,6 +219,8 @@ namespace md
 
         connect_id_ = makeConnectId();
 
+        if (brain_publish_) brain_publish_->start();
+
         if (rt_.caps.requires_ws_bootstrap)
         {
             set_state_(FeedSyncState::BOOTSTRAPPING, "venue_bootstrap_required");
@@ -222,6 +240,8 @@ namespace md
             rest_->cancel();
         if (ws_)
             ws_->close();
+        if (brain_publish_)
+            brain_publish_->stop();
         disarm_ws_watchdog_();
 
         set_state_(FeedSyncState::DISCONNECTED, "stop");
@@ -230,6 +250,7 @@ namespace md
         if (controller_)
             controller_->resetBook();
         persist_.reset();
+        brain_publish_.reset();
         persist_book_every_updates_ = 0;
         persist_book_top_ = 0;
         updates_since_book_persist_ = 0;
@@ -776,21 +797,19 @@ namespace md
 
     void GenericFeedHandler::persist_snapshot_(const GenericSnapshotFormat &snap, std::string_view source)
     {
-        if (!persist_)
-            return;
-        persist_->write_snapshot(snap, source);
+        if (persist_) persist_->write_snapshot(snap, source);
+        if (brain_publish_) brain_publish_->publish_snapshot(snap, source);
     }
 
     void GenericFeedHandler::persist_incremental_(const GenericIncrementalFormat &inc, std::string_view source)
     {
-        if (!persist_)
-            return;
-        persist_->write_incremental(inc, source);
+        if (persist_) persist_->write_incremental(inc, source);
+        if (brain_publish_) brain_publish_->publish_incremental(inc, source);
     }
 
     void GenericFeedHandler::maybe_persist_book_(std::string_view source)
     {
-        if (!persist_ || !controller_)
+        if ((!persist_ && !brain_publish_) || !controller_)
             return;
         if (persist_book_every_updates_ == 0 || persist_book_top_ == 0)
             return;
@@ -802,10 +821,22 @@ namespace md
             return;
         updates_since_book_persist_ = 0;
 
-        persist_->write_book_state(controller_->book(),
-                                   controller_->getAppliedSeqID(),
-                                   persist_book_top_,
-                                   source,
-                                   now_ns_());
+        const auto ts_book_ns = now_ns_();
+        if (persist_)
+        {
+            persist_->write_book_state(controller_->book(),
+                                       controller_->getAppliedSeqID(),
+                                       persist_book_top_,
+                                       source,
+                                       ts_book_ns);
+        }
+        if (brain_publish_)
+        {
+            brain_publish_->publish_book_state(controller_->book(),
+                                               controller_->getAppliedSeqID(),
+                                               persist_book_top_,
+                                               source,
+                                               ts_book_ns);
+        }
     }
 }

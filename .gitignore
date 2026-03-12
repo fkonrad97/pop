@@ -44,8 +44,11 @@
 /build/
 /cmake-build-debug/
 .vscode/launch.json
-.gitignore
 .vscode/tasks.json
 CMakePresets.json
 .vscode/settings.json
 persist/*
+sim_results/*
+arb_results.csv
+scripts/__pycache__/*
+CLAUDE.md

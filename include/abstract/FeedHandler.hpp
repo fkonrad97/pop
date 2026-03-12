@@ -50,6 +50,14 @@ namespace md {
         std::string rest_host; ///< optional override, "" = default
         std::string rest_port; ///< optional override, "" = default
         std::string rest_path; ///< optional override, "" = default
+
+        // Optional: PoP -> brain outbound websocket (central aggregation).
+        // Disabled when brain_ws_host is empty.
+        std::string brain_ws_host;
+        std::string brain_ws_port;
+        std::string brain_ws_path;
+        bool brain_ws_insecure{false}; // testing only: disable TLS cert/host verification
+
         std::string persist_path; ///< optional event persistence file path, "" = disabled
         std::size_t persist_book_every_updates{0}; ///< 0 = disabled
         std::size_t persist_book_top{0}; ///< top N levels per side for book_state

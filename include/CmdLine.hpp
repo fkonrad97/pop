@@ -21,6 +21,10 @@ struct CmdOptions {
     std::optional<std::string> rest_host; // override or std::nullopt
     std::optional<std::string> rest_port; // override or std::nullopt
     std::optional<std::string> rest_path; // override or std::nullopt
+    std::optional<std::string> brain_ws_host; // outbound brain WS host (optional)
+    std::optional<std::string> brain_ws_port; // outbound brain WS port (optional)
+    std::optional<std::string> brain_ws_path; // outbound brain WS path (optional)
+    bool brain_ws_insecure{false}; // disable TLS verification (local testing)
     std::optional<std::string> persist_path; // optional JSONL persistence file
     std::optional<std::string> log_path; // optional process log file path
     int persist_book_every_updates{0}; // 0 = disabled
@@ -78,6 +82,14 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
              "Optional REST port override")
             ("rest_path", po::value<std::string>(),
              "Optional REST path override")
+            ("brain_ws_host", po::value<std::string>(),
+             "Optional brain WebSocket host (PoP publishes normalized updates)")
+            ("brain_ws_port", po::value<std::string>(),
+             "Optional brain WebSocket port")
+            ("brain_ws_path", po::value<std::string>(),
+             "Optional brain WebSocket path/target, e.g. /pop")
+            ("brain_ws_insecure", po::bool_switch()->default_value(false),
+             "Brain WS: disable TLS cert/host verification (local testing only)")
             ("persist_path", po::value<std::string>(),
              "Optional persistence output file path (JSONL)")
             ("log_path", po::value<std::string>(),
@@ -111,6 +123,7 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
                     << "[--depthLevel N] "
                     << "[--ws_host HOST] [--ws_port PORT] [--ws_path PATH] "
                     << "[--rest_host HOST] [--rest_port PORT] [--rest_path PATH] "
+                    << "[--brain_ws_host HOST] [--brain_ws_port PORT] [--brain_ws_path PATH] [--brain_ws_insecure] "
                     << "[--persist_path FILE] [--log_path FILE] "
                     << "[--persist_book_every_updates N] [--persist_book_top N] "
                     << "[--debug --debug_raw --debug_every N --debug_top N]\n\n";
@@ -137,6 +150,10 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
     if (vm.count("rest_host")) out.rest_host = vm["rest_host"].as<std::string>();
     if (vm.count("rest_port")) out.rest_port = vm["rest_port"].as<std::string>();
     if (vm.count("rest_path")) out.rest_path = vm["rest_path"].as<std::string>();
+    if (vm.count("brain_ws_host")) out.brain_ws_host = vm["brain_ws_host"].as<std::string>();
+    if (vm.count("brain_ws_port")) out.brain_ws_port = vm["brain_ws_port"].as<std::string>();
+    if (vm.count("brain_ws_path")) out.brain_ws_path = vm["brain_ws_path"].as<std::string>();
+    out.brain_ws_insecure = vm["brain_ws_insecure"].as<bool>();
     if (vm.count("persist_path")) out.persist_path = vm["persist_path"].as<std::string>();
     if (vm.count("log_path")) out.log_path = vm["log_path"].as<std::string>();
     out.persist_book_every_updates = std::max(0, vm["persist_book_every_updates"].as<int>());
