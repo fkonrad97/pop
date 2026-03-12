@@ -49,3 +49,8 @@
 CMakePresets.json
 .vscode/settings.json
 persist/*
+sim_results/*
+arb_results.csv
+.gitignore
+scripts/__pycache__/jsonl_stream_loader.cpython-312.pyc
+scripts/__pycache__/unified_arb_stream.cpython-312.pyc
