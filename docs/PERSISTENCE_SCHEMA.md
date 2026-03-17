@@ -1,8 +1,9 @@
 # Persistence Schema
 
-This document defines the JSONL schema written by `FilePersistSink`.
+This document defines the shared JSON schema used by both `FilePersistSink` and
+`WsPublishSink`.  The two sinks emit identical JSON objects; only the transport differs.
 
-## File Format
+## File Format (`FilePersistSink`)
 
 - One JSON object per line (JSONL).
 - Append-only.
@@ -11,17 +12,25 @@ This document defines the JSONL schema written by `FilePersistSink`.
   - replay/debug from raw-normalized feed events (`snapshot`, `incremental`)
   - periodic state materialization (`book_state`)
 
+## WebSocket Format (`WsPublishSink`)
+
+- One JSON object per WebSocket **text frame** (not newline-delimited).
+- Each frame is a complete, self-contained JSON message using the same schema as above.
+- Enabled by passing `--brain_ws_host` to the process; disabled when the flag is absent.
+- `persist_seq` is an independent counter per sink instance — values from the file sink
+  and the WS sink are not comparable to each other.
+
 ## Common Fields
 
 All record types include:
 
 - `schema_version` (`int`): current value `1`.
-- `event_type` (`string`): one of `snapshot`, `incremental`, `book_state`.
-- `source` (`string`): origin path, e.g. `rest_snapshot`, `ws_snapshot`, `ws_incremental`, `snapshot_applied`, `incremental_applied`.
+- `event_type` (`string`): one of `snapshot`, `incremental`, `book_state`, `status`.
+- `source` (`string`): origin path, e.g. `rest_snapshot`, `ws_snapshot`, `ws_incremental`, `snapshot_applied`, `incremental_applied`. Not present on `status` events.
 - `venue` (`string`): normalized venue name (`binance`, `okx`, `bitget`, `bybit`, `kucoin`).
 - `symbol` (`string`): mapped runtime symbol from config.
-- `persist_seq` (`uint64`): monotonically increasing sequence assigned by the sink per file stream.
-- `ts_persist_ns` (`int64`): local wall-clock nanoseconds at write time.
+- `persist_seq` (`uint64`): monotonically increasing sequence assigned by the sink per file stream. Not present on `status` events.
+- `ts_persist_ns` (`int64`): local wall-clock nanoseconds at write time. Not present on `status` events.
 
 ### Ordering Semantics
 
@@ -95,6 +104,39 @@ Usage notes:
 - Produced periodically (configured by `--persist_book_every_updates`).
 - This is a derived checkpoint for fast restore/inspection.
 - It is not a raw venue message, so `ts_recv_ns` is set to `0`.
+
+### `status`
+
+Emitted by `WsPublishSink` only (not written by `FilePersistSink`). Sent on every
+`GenericFeedHandler` sync state transition so brain can immediately invalidate or
+re-trust a venue's book.
+
+Fields:
+
+- `feed_state` (`string`): one of:
+  - `"disconnected"` — PoP lost the exchange feed; book is stale and must not be used.
+  - `"resyncing"` — PoP is in a transitional state (CONNECTING / BOOTSTRAPPING / WAIT_*).
+  - `"synced"` — PoP reached SYNCED state on the exchange feed.
+- `reason` (`string`): human-readable detail (e.g. `"watchdog"`, `"gap"`, `"stop"`).
+- `ts_ns` (`int64`): local wall-clock nanoseconds at emission time.
+
+**Brain behaviour on receipt:**
+- `"disconnected"`: marks `feed_healthy = false`, calls `resetBook()`, clears `ts_book_ns`.
+  The venue is excluded from arb scanning until new data events arrive.
+- `"resyncing"`: marks `feed_healthy = false`. Book data from the prior sync is retained
+  in memory but not used until the next successful data event restores `feed_healthy`.
+- `"synced"`: no direct action needed — the following `book_state` event will restore
+  `feed_healthy = true` via the normal data path.
+
+Example:
+
+```json
+{"schema_version":1,"event_type":"status","venue":"binance","symbol":"BTCUSDT","feed_state":"disconnected","reason":"watchdog","ts_ns":1741123456789000000}
+```
+
+```json
+{"schema_version":1,"event_type":"status","venue":"binance","symbol":"BTCUSDT","feed_state":"synced","reason":"","ts_ns":1741123460000000000}
+```
 
 ## Level Object
 

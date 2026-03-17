@@ -16,9 +16,30 @@
 #include "orderbook/OrderBookController.hpp"
 
 namespace md {
-    // Publishes normalized feed events to a central "brain" via websocket.
-    // Payloads intentionally match the JSONL objects written by FilePersistSink
-    // (except they are sent as individual WS text messages).
+    /**
+     * Publishes normalized feed events to a central "brain" over an outbound WebSocket
+     * (TLS by default).  Payloads are identical to the JSONL records written by
+     * FilePersistSink but are sent as individual WebSocket text frames (not newline-
+     * delimited).
+     *
+     * Lifecycle:
+     *   - Disabled (no-op) until start() is called.
+     *   - Automatically reconnects with exponential backoff (1 s → 30 s) on drop.
+     *   - stop() cancels any pending reconnect and closes the socket.
+     *
+     * Backpressure:
+     *   - Outgoing messages are queued in WsClient's outbox (capped at kDefaultMaxOutbox).
+     *   - When the cap is exceeded, the *oldest* messages are dropped (prefer freshness).
+     *
+     * Sequence numbering:
+     *   - persist_seq is an independent counter; it is not shared with FilePersistSink.
+     *     If both sinks are active their persist_seq spaces are disjoint.
+     *
+     * TLS:
+     *   - Peer verification is enabled by default.
+     *   - Pass insecure_tls=true to disable cert/host checking (local testing only).
+     *     A warning is emitted to stderr on every connection when this flag is set.
+     */
     class WsPublishSink {
     public:
         WsPublishSink(boost::asio::io_context &ioc,
@@ -31,6 +52,11 @@ namespace md {
 
         void start();
         void stop();
+
+        /// Publish a feed health status event to brain.
+        /// feed_state: "disconnected" | "resyncing" | "synced"
+        /// Called automatically by GenericFeedHandler on every sync state transition.
+        void publish_status(std::string_view feed_state, std::string_view reason) noexcept;
 
         void publish_snapshot(const GenericSnapshotFormat &snap, std::string_view source) noexcept;
         void publish_incremental(const GenericIncrementalFormat &inc, std::string_view source) noexcept;
@@ -48,7 +74,7 @@ namespace md {
         void connect_();
         void schedule_reconnect_();
 
-        void send_json_(nlohmann::json &j) noexcept;
+        void send_json_(const nlohmann::json &j) noexcept;
 
     private:
         boost::asio::io_context &ioc_;
@@ -61,11 +87,14 @@ namespace md {
         std::string venue_;
         std::string symbol_;
 
+        bool insecure_tls_{false};
         bool running_{false};
         bool reconnect_scheduled_{false};
         int reconnect_delay_ms_{1000};
         std::uint64_t reconnect_gen_{0};
 
+        // Independent counter; not shared with FilePersistSink.
+        // If both sinks are active, their persist_seq spaces are disjoint.
         std::uint64_t persist_seq_{0};
     };
 } // namespace md
