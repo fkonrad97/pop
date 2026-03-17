@@ -168,8 +168,8 @@ namespace md
         if (!cfg_.brain_ws_host.empty())
         {
             const std::string host = cfg_.brain_ws_host;
-            const std::string port = cfg_.brain_ws_port.empty() ? "443" : cfg_.brain_ws_port;
-            const std::string path = cfg_.brain_ws_path.empty() ? "/" : cfg_.brain_ws_path;
+            const std::string port = cfg_.brain_ws_port;  // defaults applied in main.cpp
+            const std::string path = cfg_.brain_ws_path;  // defaults applied in main.cpp
             brain_publish_ = std::make_unique<WsPublishSink>(ioc_,
                                                             host,
                                                             port,

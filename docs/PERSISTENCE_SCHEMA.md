@@ -1,8 +1,9 @@
 # Persistence Schema
 
-This document defines the JSONL schema written by `FilePersistSink`.
+This document defines the shared JSON schema used by both `FilePersistSink` and
+`WsPublishSink`.  The two sinks emit identical JSON objects; only the transport differs.
 
-## File Format
+## File Format (`FilePersistSink`)
 
 - One JSON object per line (JSONL).
 - Append-only.
@@ -10,6 +11,14 @@ This document defines the JSONL schema written by `FilePersistSink`.
 - Designed for downstream consumers that need both:
   - replay/debug from raw-normalized feed events (`snapshot`, `incremental`)
   - periodic state materialization (`book_state`)
+
+## WebSocket Format (`WsPublishSink`)
+
+- One JSON object per WebSocket **text frame** (not newline-delimited).
+- Each frame is a complete, self-contained JSON message using the same schema as above.
+- Enabled by passing `--brain_ws_host` to the process; disabled when the flag is absent.
+- `persist_seq` is an independent counter per sink instance — values from the file sink
+  and the WS sink are not comparable to each other.
 
 ## Common Fields
 

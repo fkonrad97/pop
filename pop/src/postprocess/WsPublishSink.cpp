@@ -8,6 +8,9 @@ namespace md {
     namespace {
         constexpr int kReconnectDelayMinMs = 1000;
         constexpr int kReconnectDelayMaxMs = 30'000;
+        // Outbox cap: how many messages to queue while the socket is not writable.
+        // Oldest messages are dropped when the cap is exceeded (prefer freshest updates).
+        constexpr std::size_t kDefaultMaxOutbox = 5000;
     }
 
     WsPublishSink::WsPublishSink(boost::asio::io_context &ioc,
@@ -24,10 +27,11 @@ namespace md {
           port_(std::move(port)),
           target_(std::move(target)),
           venue_(std::move(venue)),
-          symbol_(std::move(symbol)) {
+          symbol_(std::move(symbol)),
+          insecure_tls_(insecure_tls) {
         ws_->set_tls_verify_peer(!insecure_tls);
         // If brain is down or slow, keep memory bounded; prefer freshest updates.
-        ws_->set_max_outbox(5000);
+        ws_->set_max_outbox(kDefaultMaxOutbox);
         ws_->set_on_raw_message([](const char *, std::size_t) {
             // Intentionally ignored; brain -> pop messages are not used yet.
         });
@@ -44,6 +48,8 @@ namespace md {
             reconnect_delay_ms_ = kReconnectDelayMinMs;
             reconnect_scheduled_ = false;
             std::cerr << "[WsPublishSink] connected brain ws host=" << host_ << " port=" << port_ << " target=" << target_ << "\n";
+            if (insecure_tls_)
+                std::cerr << "[WsPublishSink] WARNING: TLS certificate verification is DISABLED (--brain_ws_insecure)\n";
         });
 
         ws_->set_on_close([this] {
@@ -128,8 +134,11 @@ namespace md {
         });
     }
 
-    void WsPublishSink::send_json_(nlohmann::json &j) noexcept {
+    void WsPublishSink::send_json_(const nlohmann::json &j) noexcept {
         try {
+            // ts_persist_ns in the payload marks the time this message was enqueued,
+            // not the time it was actually written to the socket.  Under a backlogged
+            // outbox the two can diverge by several seconds.
             const std::string payload = j.dump();
             ws_->send_text(payload);
         } catch (...) {
@@ -148,6 +157,9 @@ namespace md {
         j["persist_seq"] = ++persist_seq_;
         j["ts_recv_ns"] = snap.ts_recv_ns;
         j["ts_persist_ns"] = now_ns_();
+        // GenericSnapshotFormat carries a single sequence id (lastUpdateId).
+        // seq_first == seq_last here; venues that distinguish them (e.g. Binance)
+        // expose only seq_last through the normalized struct.
         j["seq_first"] = snap.lastUpdateId;
         j["seq_last"] = snap.lastUpdateId;
         j["checksum"] = snap.checksum;
