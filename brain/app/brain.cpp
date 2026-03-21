@@ -15,6 +15,7 @@
 #include "brain/BrainCmdLine.hpp"
 #include "brain/UnifiedBook.hpp"
 #include "brain/WsServer.hpp"
+#include "utils/HealthServer.hpp"
 #include "utils/Log.hpp"
 
 int main(int argc, char **argv) {
@@ -60,6 +61,7 @@ int main(int argc, char **argv) {
 
     // ---- Core components ----
     boost::asio::io_context ioc;
+    const auto start_time = std::chrono::steady_clock::now();
 
     brain::UnifiedBook book(opts.depth);
     const std::uint64_t output_max_bytes =
@@ -131,12 +133,57 @@ int main(int argc, char **argv) {
     };
     arm_watchdog();
 
+    // ---- D5: Health endpoint ----
+    md::HealthServer health_server(ioc, opts.health_port, [&]() -> std::string {
+        using nlohmann::json;
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        const auto uptime_s = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - start_time).count();
+
+        const auto &venues = book.venues();
+        const std::size_t total = venues.size();
+        const std::size_t synced = book.synced_count();
+
+        json j;
+        j["ok"]       = (total > 0 && synced == total);
+        j["process"]  = "brain";
+        j["uptime_s"] = uptime_s;
+        j["synced"]   = synced;
+        j["total"]    = total;
+
+        json jarr = json::array();
+        for (const auto &vb : venues) {
+            std::string state;
+            if (vb.synced())           state = "synced";
+            else if (!vb.feed_healthy) state = "feed_down";
+            else                       state = "syncing";
+            const std::int64_t age_ms = vb.ts_book_ns > 0
+                ? (now_ns - vb.ts_book_ns) / 1'000'000LL : 0;
+            jarr.push_back({{"venue", vb.venue_name}, {"symbol", vb.symbol},
+                             {"state", state}, {"feed_healthy", vb.feed_healthy},
+                             {"age_ms", age_ms}});
+        }
+        j["venues"] = jarr;
+
+        const std::int64_t last_cross = arb.last_cross_ns();
+        if (last_cross > 0)
+            j["last_cross_s_ago"] = (now_ns - last_cross) / 1'000'000'000.0;
+        else
+            j["last_cross_s_ago"] = nullptr;
+
+        j["ws_clients"] = server.session_count();
+        return j.dump();
+    });
+    health_server.start();
+
     // ---- Signal handling ----
     boost::asio::signal_set signals(ioc, SIGINT, SIGTERM);
     signals.async_wait([&](const boost::system::error_code &, int) {
         spdlog::info("[brain] shutting down");
         watchdog_timer.cancel();
         arb.flush();
+        health_server.stop();
         server.stop();
         ioc.stop();
         md::log::flush();

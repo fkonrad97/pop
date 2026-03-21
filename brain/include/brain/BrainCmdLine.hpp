@@ -24,6 +24,7 @@ struct BrainOptions {
     std::size_t output_max_mb{0};             ///< D3: rotate arb output after N MB (0 = no rotation)
     std::int64_t watchdog_no_cross_sec{0};    ///< D4: warn if no cross in this many seconds (0 = disabled)
     std::size_t depth{50};      ///< OrderBook depth per venue
+    uint16_t    health_port{0};   ///< D5: plain-HTTP health endpoint port (0 = disabled)
     bool        show_help{false};
 };
 
@@ -64,7 +65,9 @@ inline bool parse_brain_cmdline(int argc, char **argv, BrainOptions &out) {
         ("depth",         po::value<std::size_t>()->default_value(50),
                           "OrderBook depth per venue")
         ("log-level",     po::value<std::string>()->default_value("info"),
-                          "D1: log verbosity: debug | info | warn | error");
+                          "D1: log verbosity: debug | info | warn | error")
+        ("health-port",   po::value<uint16_t>()->default_value(0),
+                          "D5: plain-HTTP health endpoint port (0 = disabled); e.g. 8081");
 
     po::variables_map vm;
     try {
@@ -105,6 +108,7 @@ inline bool parse_brain_cmdline(int argc, char **argv, BrainOptions &out) {
     out.watchdog_no_cross_sec = vm["watchdog-no-cross-sec"].as<std::int64_t>();
     out.depth         = vm["depth"].as<std::size_t>();
     out.log_level = vm["log-level"].as<std::string>();
+    out.health_port = vm["health-port"].as<uint16_t>();
     if (vm.count("certfile"))   out.certfile   = vm["certfile"].as<std::string>();
     if (vm.count("keyfile"))    out.keyfile    = vm["keyfile"].as<std::string>();
     if (vm.count("ca-certfile")) out.ca_certfile = vm["ca-certfile"].as<std::string>();

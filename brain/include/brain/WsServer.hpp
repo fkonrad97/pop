@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <string>
@@ -34,6 +35,13 @@ public:
 
     /// Stop accepting and close all active sessions.
     void stop();
+
+    /// Count of currently live (non-expired) sessions.
+    [[nodiscard]] std::size_t session_count() const noexcept {
+        return static_cast<std::size_t>(
+            std::count_if(sessions_.begin(), sessions_.end(),
+                          [](const std::weak_ptr<WsSession> &w) { return !w.expired(); }));
+    }
 
 private:
     void do_accept_();

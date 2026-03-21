@@ -69,8 +69,8 @@ Needed to run the engine unattended and debug incidents.
 | D2 | Per-venue counters: messages received, resyncs triggered, outbox drops, crosses detected — exposed via stderr heartbeat | HIGH | ✅ Done | `pop/src/md/GenericFeedHandler.cpp`, `brain/src/brain/ArbDetector.cpp` | PoP: `[HEARTBEAT]` every 60 s with msgs/book_updates/resyncs; Brain: total crosses on `flush()` |
 | D3 | Output file rotation: size- or time-based rotation for `--output` arb JSONL and `--persist_path` files; prevents unbounded disk growth | MEDIUM | ✅ Done | `brain/src/brain/ArbDetector.cpp`, `brain/include/brain/BrainCmdLine.hpp`, `pop/src/postprocess/FilePersistSink.cpp`, `pop/include/postprocess/FilePersistSink.hpp` | `--output-max-mb N` for arb JSONL; persist sink rotates plain JSONL; .gz rotation deferred |
 | D4 | Brain watchdog: periodic timer (e.g. 60 s) that logs WARN if `synced_count() == 0` or no arb scan has fired for N seconds | MEDIUM | ✅ Done | `brain/app/brain.cpp`, `brain/include/brain/BrainCmdLine.hpp`, `brain/include/brain/ArbDetector.hpp` | `--watchdog-no-cross-sec N` (0=off); always warns when synced_count==0 |
-| D5 | Health endpoint: Unix-socket or HTTP endpoint queryable for current feed status without grepping stderr | LOW | ⬜ Not Started | brain, pop | |
-| D6 | Process supervisor config: systemd unit files (or supervisord configs) for auto-restart on crash | LOW | ⬜ Not Started | `deploy/` (new directory) | |
+| D5 | Health endpoint: Unix-socket or HTTP endpoint queryable for current feed status without grepping stderr | LOW | ✅ Done | `common/include/utils/HealthServer.hpp`, `brain/app/brain.cpp`, `pop/app/main.cpp`, `brain/include/brain/BrainCmdLine.hpp`, `pop/include/CmdLine.hpp`, `pop/include/md/GenericFeedHandler.hpp`, `brain/include/brain/WsServer.hpp` | `--health-port N` (brain) / `--health_port N` (pop); plain HTTP JSON; 0=disabled; `ok:true` when all synced |
+| D6 | Process supervisor config: systemd unit files (or supervisord configs) for auto-restart on crash | LOW | ✅ Done | `deploy/brain.service`, `deploy/pop@.service`, `deploy/supervisord.conf`, `deploy/README.md` | systemd template unit `pop@.service` (one per venue); supervisord alternative; pop now handles SIGTERM gracefully |
 
 ---
 
@@ -113,6 +113,18 @@ Current single-threaded `io_context` is correct and sufficient for 2–10 symbol
 | G1 | Per-handler thread isolation: one `io_context` + one thread per `GenericFeedHandler`; eliminates single-thread bottleneck for 20+ symbols without strand refactoring | MEDIUM | ⬜ Not Started | Preferred scaling path; each handler fully isolated; join all threads on exit |
 | G2 | Thread-pool `io_context`: call `ioc.run()` from N threads to parallelise handlers; requires strand protection on `GenericFeedHandler` internal state (`state_`, `buffer_`, counters) | LOW | ⬜ Not Started | `WsClient`/`RestClient` already strand-safe; `GenericFeedHandler` is not yet |
 | G3 | CPU offload: move JSON parsing off the I/O thread onto a `thread_pool`; post results back via `dispatch()`; eliminates parse latency without touching handler state model | LOW | ⬜ Not Started | Worthwhile if symbol count grows beyond ~20 or heavier per-message analytics are added |
+
+---
+
+## Batch 7 — ✅ Complete (2026-03-21)
+
+D5 health endpoint + D6 process supervisor configs. Pop SIGTERM handling added as prerequisite.
+
+| # | Item | Status |
+|---|---|---|
+| — | Pop: add SIGTERM/SIGINT handler (`boost::asio::signal_set`) — prerequisite for systemd `stop` | ✅ Done |
+| D5 | `HealthServer` header-only HTTP health class; `--health-port` / `--health_port` on both processes; JSON with sync state, uptime, per-venue/handler details | ✅ Done |
+| D6 | `deploy/brain.service`, `deploy/pop@.service` (systemd template), `deploy/supervisord.conf`, `deploy/README.md` | ✅ Done |
 
 ---
 

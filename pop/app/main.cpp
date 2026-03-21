@@ -1,4 +1,5 @@
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/signal_set.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/ssl.hpp>
 
@@ -13,6 +14,7 @@
 #include "CmdLine.hpp"
 #include "abstract/FeedHandler.hpp"
 #include "md/GenericFeedHandler.hpp"
+#include "utils/HealthServer.hpp"
 #include "utils/Log.hpp"
 #include "utils/VenueUtils.hpp"
 #include <chrono>
@@ -21,6 +23,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 #include "utils/DebugConfigUtils.hpp"
 
 static void print_book_bbo(const md::OrderBook &book) {
@@ -239,6 +243,7 @@ int main(int argc, char **argv) {
     // 5) Create and start one GenericFeedHandler per symbol
     // -------------------------------------------------------------------------
     boost::asio::io_context ioc;
+    const auto start_time = std::chrono::steady_clock::now();
 
     std::vector<std::unique_ptr<md::GenericFeedHandler>> handlers;
     handlers.reserve(symbols.size());
@@ -270,6 +275,42 @@ int main(int argc, char **argv) {
 
     spdlog::info("[MAIN] {} handler{} started — entering io_context loop",
                  handlers.size(), handlers.size() == 1 ? "" : "s");
+
+    // ---- D5: Health endpoint ----
+    md::HealthServer health_server(ioc, options.health_port, [&]() -> std::string {
+        using nlohmann::json;
+        const auto uptime_s = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - start_time).count();
+
+        bool all_synced = !handlers.empty();
+        json jarr = json::array();
+        for (const auto &h : handlers) {
+            const auto &cfg = h->config();
+            const std::string state = h->sync_state_str();
+            if (state != std::string("SYNCED")) all_synced = false;
+            jarr.push_back({{"base", cfg.base_ccy}, {"quote", cfg.quote_ccy},
+                             {"state", state}, {"running", h->is_running()},
+                             {"resyncs", h->resync_count()}});
+        }
+        json j;
+        j["ok"]       = all_synced;
+        j["process"]  = "pop";
+        j["venue"]    = options.venue;
+        j["uptime_s"] = uptime_s;
+        j["handlers"] = jarr;
+        return j.dump();
+    });
+    health_server.start();
+
+    // ---- Signal handling (SIGTERM / SIGINT) ----
+    boost::asio::signal_set signals(ioc, SIGINT, SIGTERM);
+    signals.async_wait([&](const boost::system::error_code &, int) {
+        spdlog::info("[POP] shutting down");
+        health_server.stop();
+        for (auto &h : handlers) h->stop();
+        ioc.stop();
+        md::log::flush();
+    });
 
     ioc.run();
     md::log::flush();

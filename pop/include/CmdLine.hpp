@@ -50,6 +50,7 @@ struct CmdOptions {
     bool debug_checksum{true};
     bool debug_seq{true};
 
+    uint16_t health_port{0}; // D5: plain-HTTP health endpoint port (0 = disabled)
     bool show_help{false};
 };
 
@@ -140,7 +141,9 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
             ("debug_no_checksum", po::bool_switch()->default_value(false),
              "Debug: do NOT print checksum fields")
             ("debug_no_seq", po::bool_switch()->default_value(false),
-             "Debug: do NOT print seq/prev fields");
+             "Debug: do NOT print seq/prev fields")
+            ("health_port", po::value<uint16_t>()->default_value(0),
+             "D5: plain-HTTP health endpoint port (0 = disabled); e.g. 8080");
 
     po::variables_map vm;
     try {
@@ -223,6 +226,7 @@ inline bool parse_cmdline(int argc, char **argv, CmdOptions &out) {
     const bool no_seq = vm["debug_no_seq"].as<bool>();
     out.debug_checksum = !no_checksum;
     out.debug_seq = !no_seq;
+    out.health_port = vm["health_port"].as<uint16_t>();
 
     return true;
 }

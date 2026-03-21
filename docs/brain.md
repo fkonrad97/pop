@@ -29,6 +29,7 @@ Parsed by `brain/include/brain/BrainCmdLine.hpp` into `BrainOptions`.
 | `--output-max-mb` | `0` | No | Rotate `--output` file at this size in MB (0 = no rotation); rotated files are renamed `.1`, `.2`, … |
 | `--watchdog-no-cross-sec` | `0` | No | Warn on stderr if no arb cross is emitted for this many seconds while ≥ 2 venues are synced (0 = off) |
 | `--log-level` | `info` | No | D1: Log verbosity: `debug` \| `info` \| `warn` \| `error` |
+| `--health-port` | `0` | No | D5: Plain-HTTP health endpoint port (0 = disabled). `GET /health` returns JSON with synced venue count, per-venue state, last arb cross time, and active WS client count. |
 | `--config` | — | No | F2: Config file path (key=value per line; CLI flags override file values). See `config/brain.conf` for an example. |
 
 **TLS / mTLS cert setup:** see [docs/HOWTO.md § 3](HOWTO.md#3-tls--mtls-certificate-setup) for full instructions (self-signed dev cert and full mTLS CA setup).

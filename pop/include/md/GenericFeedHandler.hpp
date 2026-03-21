@@ -62,6 +62,16 @@ namespace md {
         /// Stop sockets/timers and reset runtime state.
         FeedOpResult stop() override;
 
+        // D5: Health endpoint observers — lightweight, safe to call from the io_context thread.
+        [[nodiscard]] bool is_running() const noexcept {
+            return running_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] const char *sync_state_str() const noexcept {
+            return sync_state_to_string_(state_);
+        }
+        [[nodiscard]] std::uint64_t resync_count() const noexcept { return ctr_resyncs_; }
+        [[nodiscard]] const FeedHandlerConfig &config() const noexcept { return cfg_; }
+
     private:
         /// Concrete adapter selected from `FeedHandlerConfig::venue_name`.
         using AnyAdapter = std::variant<BinanceAdapter, OKXAdapter, BitgetAdapter, BybitAdapter, KucoinAdapter>;

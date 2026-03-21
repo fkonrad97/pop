@@ -1,9 +1,13 @@
 # pop — Market Data Ingestion Process
 
-`pop/` is a single-venue, single-symbol market data ingestion edge process. Run one instance per venue. It connects to an exchange, maintains a live order book, and fans out normalized events to persistence and/or the brain.
+`pop/` is a single-venue market data ingestion edge process. Run one instance per venue. It connects to an exchange, maintains live order books for one or more symbols, and fans out normalized events to persistence and/or the brain.
 
-```
+```bash
+# Single symbol
 ./build/pop/pop --venue binance --base BTC --quote USDT [options]
+
+# Multi-symbol (F3) — one process tracks multiple symbols on the same venue
+./build/pop/pop --venue binance --symbols BTC/USDT,ETH/USDT,SOL/USDT [options]
 ```
 
 ---
@@ -12,13 +16,15 @@
 
 Parsed by `pop/include/CmdLine.hpp` into `CmdOptions`.
 
-### Required
+### Symbol selection (one of the following is required)
 
 | Flag | Description |
 |---|---|
-| `--venue` | Venue name: `binance`, `okx`, `bybit`, `bitget`, `kucoin` |
-| `--base` | Base asset, e.g. `BTC` |
-| `--quote` | Quote asset, e.g. `USDT` |
+| `--symbols` | F3: Comma-separated symbol pairs, e.g. `BTC/USDT,ETH/USDT`. Overrides `--base`/`--quote` when present. |
+| `--base` + `--quote` | Single-symbol mode. Used when `--symbols` is absent. |
+| `--venue` | **Always required.** Venue name: `binance`, `okx`, `bybit`, `bitget`, `kucoin` |
+
+When `--symbols` is used, each pair spawns an independent `GenericFeedHandler` — all share one `io_context` (single thread, no extra synchronization). Per-symbol persist paths are derived automatically when `--persist_path` is set (e.g. `/tmp/feed.jsonl` → `/tmp/feed_BTC_USDT.jsonl`, `/tmp/feed_ETH_USDT.jsonl`).
 
 ### Order book
 
@@ -70,12 +76,13 @@ Disabled when `--brain_ws_host` is absent.
 |---|---|---|
 | `--rest_timeout_ms` | 8000 | REST snapshot request timeout in milliseconds (minimum 1000) |
 
-### Logging
+### Operations
 
 | Flag | Default | Description |
 |---|---|---|
 | `--log_level` | `info` | D1: Log verbosity: `debug` \| `info` \| `warn` \| `error` |
 | `--log_path` | — | D1: Write log to file in addition to stderr (`.log` appended if no extension) |
+| `--health_port` | `0` | D5: Plain-HTTP health endpoint port (0 = disabled). `GET /health` returns JSON with per-handler sync state, uptime, and resync counts. |
 
 ### Configuration file
 
